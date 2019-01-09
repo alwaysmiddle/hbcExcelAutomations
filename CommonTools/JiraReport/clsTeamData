@@ -1,0 +1,45 @@
+Option Explicit
+
+Private p_TeamName As String
+Private p_MemberEmail() As Variant
+
+
+Public Function init(Optional ByVal teamDataRange As Range = Nothing)
+    Dim i As Integer
+    Dim holderArray() As Variant
+    
+    'return 0 when initizations fails
+    If teamDataRange Is Nothing Then
+        init = 0
+        Exit Function
+    End If
+    
+    
+    On Error GoTo Errors
+    p_TeamName = teamDataRange(1, 1)
+    
+    ReDim p_MemberEmail(0 To teamDataRange.Rows.count - 1) As Variant
+    
+    'trying to load second row to last row data into new array
+    For i = 0 To UBound(p_MemberEmail)
+        p_MemberEmail(i) = teamDataRange(i + 2, 1)
+    Next i
+    
+    
+    Exit Function
+Errors:
+    Debug.Print "initization of clsTeamData failed with Range(" & teamDataRange.Address & "), error loading range!"
+    init = -1
+End Function
+
+Public Function teamName() As String
+    teamName = p_TeamName
+End Function
+
+Public Function members() As Variant
+    members = p_MemberEmail
+End Function
+
+Public Function count() As Integer
+    count = UBound(p_MemberEmail)
+End Function
