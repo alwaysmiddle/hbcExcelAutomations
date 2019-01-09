@@ -4,9 +4,9 @@ Public Upload_Date As String
 
 Public uploadWs, startWs, SLAws As Worksheet
 
-Const donefolder As String = "\\scb-lx-adv01\Fullpress\STUDIO_NEW\03_COPY\BAY\1. LIVE"
-Const SLAfolder As String = "\\bhdata06\busdev\Bay eComm\Product Onboarding\SLA Standards Reporting\Daily PC_MC_NNL Reports"
-Const template_location As String = "\\scb-lx-adv01\Fullpress\STUDIO_NEW\03_COPY\BAY\1. LIVE\Copy_Detail_Final_TemplateForLiveUpload.xlsx"
+Const donefolder As String = ""
+Const SLAfolder As String = ""
+Const template_location As String = ""
 'donefolder and SLAfolder for initial file open locations
 
 Public Sub SetStartWb()
