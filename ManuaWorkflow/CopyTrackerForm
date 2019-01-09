@@ -1,0 +1,910 @@
+Public currWb As Workbook
+Public genWb As Workbook
+Public genWs1 As Worksheet
+Public currWorkflowWs, currBreakdownWs, currInternal As Worksheet
+
+'dictionary for prioritization
+
+Public GMMdict, DMMdict, finalDMMdict As Object 'dictionary to hold DMM/GMM lists
+Public BrandDict1, BrandDict2 As Object         'dictionary to hold brandname searches
+Public titleDict As Object                      'dictionary to hold titles to clean up sheet4
+ 
+'status name for actions to take
+Const thirdParty_Status As String = "TaskUs"
+Const writeInhouse_Status As String = "Write in House"
+Const alreadyAssigned_status As String = "Already Assigned"
+Const priority_status As String = "Priority"
+ 
+'column titles for range return, in case these column titles change in the future
+Const inventory_Title As String = "NOS TTL $"
+Const action_Title As String = "Action"
+Const gProductNum_Title = "Global Product No."
+
+'Path for saving generated file
+Public fpath As String
+'Path for Open file button
+Const Filepath As String = "\\scb-lx-adv01\Fullpress\STUDIO_NEW\03_COPY\L&T"
+
+ 'the above criterias are constant status
+ 
+Private Sub setCurrWb()
+    If currWb Is Nothing Then
+        Set currWb = Application.ActiveWorkbook
+    Else
+        On Error GoTo errorhandler
+        Set currWorkflowWs = currWb.Worksheets("Workflow")
+        Set currBreakdownWs = currWb.Worksheets("Breakdown")
+        Set currInternal = currWb.Worksheets("InHouse_Copy")
+        Exit Sub
+errorhandler:
+        MsgBox ("Could not find Worksheet: Workflow, Breakdown or Internal")
+        Err.Clear
+        Exit Sub
+    End If
+End Sub
+Private Sub setNewWb()
+
+    If genWb Is Nothing Then
+anotherWb:
+        Set genWb = Workbooks.Add
+        
+        'add new workbook with 3 sheets, named: "today's total workflow", "3P List", "Matches from lastday"
+        Set genWs1 = genWb.Worksheets(1)
+        genWs1.Name = "Investigation"
+    Else
+        On Error GoTo anotherWb 'if the genwb is closed, the genwb is lost while program can't bind it back again, so generating another wb
+        
+        Set genWs1 = genWb.Worksheets(1)
+    End If
+End Sub
+
+Public Sub AddRuntimeLibrary()
+  On Error Resume Next
+  Application.VBE.ActiveVBProject.References.AddFromFile "C:\WINDOWS\system32\scrrun.dll"
+End Sub
+
+
+Private Sub BrandName_Addlist_Button_Click()
+    Dim i As Integer
+    Dim k As Variant
+    Dim key As String
+    
+    Brand_List2.Clear
+    For i = 0 To Brand_List1.ListCount - 1
+    
+        If Brand_List1.Selected(i) = True Then
+            key = Brand_List1.List(i)
+            On Error Resume Next
+                BrandDict2.Add key, ""
+            On Error GoTo 0
+            Err.Clear
+        End If
+        
+    Next i
+    
+    Set BrandDict2 = SortDictionaryByKey(BrandDict2)
+    
+    For Each k In BrandDict2
+        Brand_List2.AddItem k
+    Next k
+End Sub
+
+Private Sub Brandname_RemoveList_Button_Click()
+    Dim i As Integer
+    Dim k As Variant
+    Dim key As String
+    
+    For i = 0 To Brand_List2.ListCount - 1
+        If Brand_List2.Selected(i) = True Then
+            key = Brand_List2.List(i)
+            BrandDict2.Remove key
+        End If
+    Next i
+    
+    Set BrandDict2 = SortDictionaryByKey(BrandDict2)
+    
+    Brand_List2.Clear
+    For Each k In BrandDict2
+        Brand_List2.AddItem k
+    Next k
+End Sub
+
+Private Sub BrandName_Search_Tbox_Change()
+    Dim userInputString, keyString As String
+    Dim key As Variant
+    
+    userInputString = Trim(BrandName_Search_Tbox.Text) 'take what user input
+    
+    'dynamic search for user experience, everytime searchbox changes, the list is refreshed and recalculated
+    If Not userInputString = "" Then
+        Brand_List1.Clear
+        For Each key In BrandDict1
+            keyString = key
+            If InStr(1, UCase(keyString), UCase(userInputString)) > 0 Then
+                Brand_List1.AddItem key
+            End If
+        Next key
+    Else
+        Brand_List1.Clear
+        For Each key In BrandDict1
+            Brand_List1.AddItem key
+        Next key
+    End If
+End Sub
+
+Private Sub ClearLastTWOday_button_Click()
+    LoadLastTwodays_Label.Caption = ""
+End Sub
+
+Private Sub DMM_only_Cbox_Click()
+
+    Call setCurrWb
+    
+    Dim i As Long
+    Dim key As Variant
+    
+    List2_DMM.Clear
+    List1_GMM.Locked = True
+    List1_GMM.BackColor = Me.BackColor
+    DMMdict.RemoveAll
+    
+    If DMM_only_Cbox = True Then
+        Dim DMMdata() As Variant
+        
+        DMMdata = defineColRange(currWorkflowWs, "DMM", False, True).Value
+        
+        For i = 1 To UBound(DMMdata)
+            DMMdict(DMMdata(i, 1)) = ""
+        Next i
+        
+        Set DMMdict = SortDictionaryByKey(DMMdict)
+        
+        For Each key In DMMdict
+            List2_DMM.AddItem key
+        Next key
+    Else
+        List1_GMM.Locked = False
+        List1_GMM.BackColor = rgbWhite
+    End If
+End Sub
+
+
+Private Sub ForceContintueCbox_Change()
+    LoadLastTWOday_Button.ForeColor = Me.ForeColor
+End Sub
+
+Private Sub List1_GMM_click()
+    Dim i, k As Long
+    Dim DMMdata As String
+    Dim DMMdataArray() As String
+    Dim key As Variant
+    
+    List2_DMM.Clear
+    DMMdict.RemoveAll
+    
+    For i = 0 To List1_GMM.ListCount - 1
+        If List1_GMM.Selected(i) = True Then
+            k = List1_GMM.List(i)
+            DMMdata = GMMdict(k)
+            DMMdataArray = Split(DMMdata, ",")
+            For k = 1 To UBound(DMMdataArray)
+                DMMdict(DMMdataArray(k)) = ""
+            Next k
+        End If
+    Next i
+    
+    Set DMMdict = SortDictionaryByKey(DMMdict, xlAscending)
+    For Each key In DMMdict
+         List2_DMM.AddItem key
+    Next key
+    
+End Sub
+
+
+Private Sub LoadLastTWOday_Button_Click()
+    Dim intChoice As Integer
+    Dim strpath As String
+    
+    LoadLastTWOday_Button.ForeColor = Me.ForeColor
+    'only allow the user to select one file
+    Application.FileDialog(msoFileDialogOpen).AllowMultiSelect = False
+    Application.FileDialog(msoFileDialogOpen).InitialFileName = Filepath & "\"
+    Application.FileDialog(msoFileDialogOpen).Filters.Add "Excel Files", "*.xlsx", 1
+    'make the file dialog visible to the user
+    intChoice = Application.FileDialog(msoFileDialogOpen).Show
+    'determine what choice the user made
+    If intChoice <> 0 Then
+    'get the file path selected by the user
+    strpath = Application.FileDialog(msoFileDialogOpen).SelectedItems(1)
+    'print the file path to Label
+    LoadLastTwodays_Label.Caption = strpath
+
+    End If
+End Sub
+
+
+    'open to "\\bhdata06\BusDev\Bay eComm\Product Onboarding\6-Copy team\L&T"
+    'where copy team saved in the shared folder
+
+Private Sub OpenReportLocationButton_Click()
+    Shell "explorer """ & Filepath & "\", vbNormalFocus
+End Sub
+
+'add items from DMM list to final list
+Private Sub Prior_AddtoList_Button_Click()
+    Dim i As Integer
+    Dim k As Variant
+    Dim key As String
+    
+    List3_finalDMM.Clear
+    For i = 0 To List2_DMM.ListCount - 1
+    
+        If List2_DMM.Selected(i) = True Then
+            key = List2_DMM.List(i)
+            On Error Resume Next
+                finalDMMdict.Add key, ""
+            On Error GoTo 0
+            Err.Clear
+        End If
+        
+    Next i
+    
+    Set finalDMMdict = SortDictionaryByKey(finalDMMdict)
+    
+    For Each k In finalDMMdict
+        List3_finalDMM.AddItem k
+    Next k
+    
+End Sub
+
+'remove items from final list
+Private Sub Prior_RemovefList_Button_Click()
+
+    Dim i As Integer
+    Dim k As Variant
+    Dim key As String
+    
+    For i = 0 To List3_finalDMM.ListCount - 1
+        If List3_finalDMM.Selected(i) = True Then
+            key = List3_finalDMM.List(i)
+            finalDMMdict.Remove key
+        End If
+    Next i
+    
+    Set finalDMMdict = SortDictionaryByKey(finalDMMdict)
+    
+    List3_finalDMM.Clear
+    For Each k In finalDMMdict
+        List3_finalDMM.AddItem k
+    Next k
+    
+End Sub
+
+Private Sub prioritization_Enable_Button_Click()
+    Call setCurrWb
+    
+    Dim i As Integer
+    If prioritization_Enable_Button = True Then
+        For i = 0 To Me.PriorFrame.Controls.count - 1
+            If Not Me.PriorFrame.Controls(i) Is prioritization_Enable_Button Then
+                Me.PriorFrame.Controls(i).Enabled = True
+            End If
+        Next i
+' initialize all the values from workflow items onto list GMM and DMM
+' use 2D ditionary, use 1st dictionary to store all the values according the 1 column category, then read the values of 1st dictionary
+' into 2nd dictionary, as keys, so it becomes unique values as well.
+
+        Dim GMMdata(), DMMdata() As Variant
+        Dim r As Long
+        Dim k As Variant
+        
+        Set GMMdict = CreateObject("Scripting.dictionary")
+        GMMdict.CompareMode = TextCompare
+        Set DMMdict = CreateObject("Scripting.dictionary")
+        DMMdict.CompareMode = TextCompare
+        
+        GMMdata = defineColRange(currWorkflowWs, "GMM", False, True).Value
+        DMMdata = defineColRange(currWorkflowWs, "DMM", False, True).Value
+
+        'load data into DMMdict
+        For r = 1 To UBound(GMMdata)
+            GMMdict(GMMdata(r, 1)) = GMMdict(GMMdata(r, 1)) & "," & DMMdata(r, 1)
+        Next r
+        
+        Set GMMdict = SortDictionaryByKey(GMMdict, xlAscending)
+        
+        For Each k In GMMdict.Keys 'populate list with GMM keys
+            List1_GMM.AddItem k
+        Next
+        
+'initialize the brand names into an array, then load them into the brand names list
+        Dim brandName_data() As Variant
+        
+        Set BrandDict1 = CreateObject("Scripting.dictionary")
+        BrandDict1.CompareMode = TextCompare
+        Set BrandDict2 = CreateObject("Scripting.dictionary")
+        BrandDict2.CompareMode = TextCompare
+        
+        'set brandnames column data into the arrary
+        brandName_data = defineColRange(currWorkflowWs, "Ecom_Brand_Name", False, True).Value
+        
+        'load data into brand name dictionary
+
+        For r = 1 To UBound(brandName_data)
+            BrandDict1(brandName_data(r, 1)) = ""
+        Next r
+        
+        For Each k In BrandDict1.Keys
+            Brand_List1.AddItem k
+        Next
+            
+    Else
+        For i = 0 To Me.PriorFrame.Controls.count - 1
+            If Not Me.PriorFrame.Controls(i) Is prioritization_Enable_Button Then
+                Me.PriorFrame.Controls(i).Enabled = False
+            End If
+        Next i
+        
+        List1_GMM.Clear
+        List2_DMM.Clear
+        List3_finalDMM.Clear
+        
+        DMM_only_Cbox = False
+        
+    End If
+End Sub
+
+Private Sub SaveFile_Button_Click()
+    'save generated sheet with today's date
+    If genWb Is Nothing Then
+        MsgBox ("You have to generate a report first!!")
+        Exit Sub
+    Else
+        genWb.Activate
+        genWb.SaveAs _
+        Filename:=fpath & "\" & "Residual_Items_ " & _
+        Format(Now(), "mmm-dd-yyyy hh mm AMPM"), FileFormat:=xlWorkbookDefault
+    End If
+End Sub
+
+
+'initialization values
+
+Private Sub UserForm_Initialize()
+    Call AddRuntimeLibrary
+    Call setCurrWb
+    
+    'initialize finalDMMdict since it can't be declared anywhere else
+    Set finalDMMdict = CreateObject("Scripting.dictionary")
+    finalDMMdict.CompareMode = TextCompare
+    
+End Sub
+
+'Generate report Section
+Private Sub GenerateReportButton_Click()
+  'prevent generation of report if last working day's file location is empty and force continue is not checked
+    If ForceContintueCbox = False Then
+        If LoadLastTwodays_Label = "" Then
+            LoadLastTWOday_Button.ForeColor = rgbRed
+            MsgBox ("Must load files before continue!! Otherwise check the ""Continue without Files""."), vbCritical
+            Exit Sub
+        Else
+            GoTo executeGenReport
+        End If
+    Else
+executeGenReport:
+
+            Call setNewWb
+            Call setCurrWb
+            
+            'save the currwb's filepath
+            fpath = currWb.Path
+            
+    'needs to copy the action into a new column called new actions
+            Dim actionRange, NewActionRange As Range
+            Dim lastcolumn As Long
+        
+        'set newactionrange
+            Set NewActionRange = Nothing
+            Set NewActionRange = defineColRangeX(currWorkflowWs, "New Action", 0, currWorkflowWs.Range("1:1"), False, True)
+            If Not NewActionRange Is Nothing Then
+                NewActionRange.Clear
+            End If
+            
+            Set actionRange = defineColRangeX(currWorkflowWs, action_Title, 0, currWorkflowWs.Range("1:1"), False, True)
+            actionRange.Copy
+            
+            With currWorkflowWs
+                lastcolumn = .Cells(1, .Columns.count).End(xlToLeft).Column
+                .Cells(1, lastcolumn + 1).PasteSpecial xlAll
+                .Cells(1, lastcolumn + 1) = "New Action"
+            End With
+            
+'            If prioritization_Enable_Button = True Then
+'                Call priortization_process
+'            End If
+            
+            If ForceContintueCbox = False Then
+                Call existForTooLong    'find all work items of same SVS showed up on today's report from two days ago, then mark them priority
+            End If
+            
+            'columns to filter
+        Dim Atr_3P_Copy, ThirdParty, NewActionTitle As Long
+        Dim product_Range As Range
+            On Error Resume Next
+            Atr_3P_Copy = Find_DefineCol(currWorkflowWs, "Attribute value of 3rd_Party_Copy", currWorkflowWs.Range("1:1"))
+            NewActionTitle = Find_DefineCol(currWorkflowWs, "New Action", currWorkflowWs.Range("1:1"))
+            
+            If Err.Number <> 0 Then
+                MsgBox ("One of the column title is missing! Exiting!")
+                Exit Sub
+            End If
+            On Error GoTo 0
+            Err.Clear
+            
+            'filter for uncounted items
+            With currWorkflowWs
+                If .AutoFilterMode Then
+                    .AutoFilterMode = False
+                End If
+                .Range("1:1").AutoFilter field:=Atr_3P_Copy, Criteria1:=""
+            End With
+            
+        'set newactionrange
+            Set NewActionRange = defineColRange(currWorkflowWs, "new action", True, True, , True)
+            Set product_Range = defineColRange(currWorkflowWs, gProductNum_Title, True, True, , True)
+            
+            Dim lastRow, Action_Col, ProductNo_Col As Long
+            
+            'copy to internal sheet of visible filtered content
+            currInternal.Activate
+            Action_Col = Find_DefineCol(currInternal, action_Title, currInternal.Range("1:1"))
+            ProductNo_Col = Find_DefineCol(currInternal, "Product No", currInternal.Range("1:1"))
+            lastRow = currInternal.Cells(currInternal.Cells.Rows.count, 1).End(xlUp).Row
+        
+        'loop through the filtered data for write in house
+            Dim cell As Range
+            
+            For Each cell In NewActionRange
+                If UCase(cell.Text) = UCase(writeInhouse_Status) Then
+                    cell.Copy currInternal.Cells(lastRow + 1, Action_Col)
+                    currInternal.Cells(lastRow + 1, Action_Col).Interior.Color = rgbLightBlue
+                    currWorkflowWs.Cells(cell.Row, product_Range.Column).Copy currInternal.Cells(lastRow + 1, ProductNo_Col)
+                    currInternal.Cells(lastRow + 1, ProductNo_Col).Interior.Color = rgbLightBlue
+                    
+                    lastRow = currInternal.Cells(currInternal.Cells.Rows.count, 1).End(xlUp).Row
+                End If
+            Next cell
+            
+            With currWorkflowWs
+                If .AutoFilterMode Then
+                    .ShowAllData
+                End If
+                .Range("1:1").AutoFilter field:=NewActionRange.Column, Criteria1:=priority_status, Operator:=xlFilterValues
+            End With
+
+        'set newactionrange
+            Set NewActionRange = defineColRange(currWorkflowWs, "new action", True, True, , True)
+            Set product_Range = defineColRange(currWorkflowWs, gProductNum_Title, True, True, , True)
+            
+            currInternal.Activate
+            NewActionRange.Copy currInternal.Cells(lastRow + 1, Action_Col)
+            currInternal.Range(Cells(lastRow + 1, Action_Col), Cells(lastRow + 1, Action_Col).End(xlDown)).Interior.Color = rgbLightBlue
+            product_Range.Copy currInternal.Cells(lastRow + 1, ProductNo_Col)
+            currInternal.Range(Cells(lastRow + 1, ProductNo_Col), Cells(lastRow + 1, ProductNo_Col).End(xlDown)).Interior.Color = rgbLightBlue
+            
+            On Error Resume Next
+            currWorkflowWs.Activate
+            currWorkflowWs.ShowAllData
+            On Error GoTo 0
+            
+        'copy to breakdown sheet
+            Set NewActionRange = defineColRange(currWorkflowWs, "new action", False, False, , True)
+            Set product_Range = defineColRange(currWorkflowWs, "NOS TTL $", False, False, , True)
+            
+            NewActionRange.Copy currBreakdownWs.Range("A1")
+            product_Range.Copy currBreakdownWs.Range("B1")
+            Set NewActionRange = defineColRange(currBreakdownWs, "new action", False, True, , True)
+            
+            For Each cell In NewActionRange
+                If UCase(cell) = UCase(priority_status) Then
+                    cell = writeInhouse_Status
+                End If
+            Next cell
+            
+            currBreakdownWs.UsedRange.Cells.Interior.ColorIndex = 0
+        'remove duplicate on the internal sheet
+            currInternal.Activate
+            On Error Resume Next
+            currInternal.UsedRange.RemoveDuplicates Columns:=1, Header:=xlYes
+            
+            If Err.Number <> 0 Then
+                MsgBox ("Remove Duplicates failed, if your workbook is shared, please remove duplicates manually.")
+            End If
+            
+            On Error GoTo 0
+            Err.Clear
+    End If
+End Sub
+
+
+'check all the items with MFG-SVS that is present on current workbook, and write them into genworkbook
+Private Sub existForTooLong()
+    Dim last2Wb As Workbook
+    Dim currentRange, olderRange, NewActionRange As Range
+    Dim cell As Range
+    Dim last2Fname As String
+    Dim i, n, col, existCount As Integer
+    
+    Call setCurrWb
+    Call setNewWb
+
+'open second last day's workbook
+    last2Fname = LoadLastTwodays_Label.Caption
+    
+    Set last2Wb = Workbooks.Open(last2Fname, ReadOnly:=True, UpdateLinks:=False)
+    If last2Wb Is Nothing Then
+        MsgBox ("Working last working day's book failed, exiting!")
+        Exit Sub
+    End If
+    
+    If last2Wb.Worksheets(1).AutoFilterMode = True Then
+        last2Wb.Worksheets(1).AutoFilterMode = False
+    End If
+    last2Wb.Worksheets(1).Columns.EntireColumn.Hidden = False
+    last2Wb.Worksheets(1).Rows.EntireRow.Hidden = False
+    
+    If WorksheetFunction.CountA(last2Wb.Worksheets(1).UsedRange) = 0 And last2Wb.Worksheets(1).Shapes.count = 0 Then
+        MsgBox ("The workbook loaded has empty ""WorkFlow"" worksheet!"), vbCritical
+        Exit Sub
+    End If
+    
+'loop through current list, using match function, if found, copy current list into sheet1
+    Dim Action_Col As Long
+    
+    currWorkflowWs.Cells(1, 1).EntireRow.Copy genWs1.Cells(1, 1) 'title copy
+    Action_Col = Find_DefineCol(currWorkflowWs, "Action", currWorkflowWs.Range("1:1"))
+    
+    n = 1
+    Set olderRange = defineColRange(last2Wb.Worksheets(1), "SVS", False, True)
+    Set currentRange = defineColRange(currWorkflowWs, "SVS", False, True)
+    Set NewActionRange = defineColRange(currWorkflowWs, "New Action", False, False, , True)
+    On Error GoTo cleanexit
+    For Each cell In currentRange
+        If Application.WorksheetFunction.CountIf(olderRange, cell.Value) > 0 Then
+            n = n + 1
+            cell.EntireRow.Copy genWs1.Cells(n, 1)
+            
+            If InStr(1, "re-work", currWorkflowWs.Cells(cell.Row, Action_Col).Text, vbTextCompare) > 0 Then
+                'if it's re-work status, then the new action is rework.
+            Else
+                cell.EntireRow.Interior.Color = rgbOrange
+                currWorkflowWs.Cells(cell.Row, NewActionRange.Column) = priority_status
+            End If
+        End If
+    Next cell
+    
+    On Error GoTo 0
+    Err.Clear
+    
+    Set olderRange = Nothing
+    Set currentRange = Nothing
+    last2Wb.Close savechanges:=False
+    genWs1.Rows.EntireRow.Interior.ColorIndex = 0
+
+ 'copy the columns titled in the following array from genraw to genws1
+    Dim trim_Array() As String
+    trim_Array = Split("GMM,DMM,Ecom_Brand_Name,SVS,Global Product No.,NOS TTL $,Action", ",")
+    Set titleDict = CreateObject("Scripting.Dictionary")
+
+    For i = 0 To UBound(trim_Array)
+        titleDict.Add trim_Array(i), ""
+    Next i
+
+ 'this section cleans up sheet
+    Dim key As Variant
+    Dim titleString As String
+    col = 1
+    
+    genWs1.Range("A1").Resize(, titleDict.count).EntireColumn.Insert shift:=xlToRight
+    
+    For Each key In titleDict
+        titleString = key
+        Set currentRange = defineColRange(genWs1, titleString, False, False)
+        currentRange.Copy genWs1.Cells(1, col)
+        col = col + 1
+    Next key
+    
+    genWs1.Range(Columns(col), Columns(genWs1.Columns.count)).Delete shift:=xlToLeft
+ 'after cleaning up sheet, now change priority status
+    Dim actionRange As Range
+    Dim lastRowWs1 As Long
+    
+    Set actionRange = defineColRange(genWs1, action_Title, False, True)
+
+    For Each cell In actionRange
+        If Not UCase(cell.Text) = UCase("Re-Work") Then
+            genWs1.Cells(cell.Row, actionRange.Column) = priority_status
+        End If
+    Next cell
+
+    Exit Sub
+cleanexit:
+    MsgBox ("Please check if you have the right file loaded!"), vbCritical
+    last2Wb.Close savechanges:=False
+End Sub
+
+'this section of code is priortization post processing, it takes final DMM list and anchors them in today's workflow
+'reducing amount of items needed juggling
+
+Private Sub priortization_process()
+    Call setNewWb
+    Call setCurrWb
+'hide all the cells that that matches listbox3's DMM numbers on the today's bucket
+
+    Dim DMMrange, BrandNameRange, cell As Range
+    Dim DMMnum, i As Integer
+    Dim ActionCol, NewActionCol As Long
+    Dim brandString As String
+    
+    'find action column and new action column number
+    ActionCol = Find_DefineCol(currWorkflowWs, action_Title, currWorkflowWs.Range("1:1"))
+    NewActionCol = defineColRange(currWorkflowWs, "New Action", True, True, , True).Column
+    
+    'filter out the WIH and sent to taskus
+    With currWorkflowWs
+        If .AutoFilterMode Then
+            .AutoFilterMode = False
+        End If
+        .UsedRange.AutoFilter field:=ActionCol, Criteria1:="write in house", Operator:=xlOr, Criteria2:="sent to taskus"
+    End With
+    
+    'then use the filtered data to change them into priority
+    Set DMMrange = defineColRange(currWorkflowWs, "DMM", True, True)
+    Set BrandNameRange = defineColRange(currWorkflowWs, "Ecom_Brand_Name", True, True)
+    For i = 0 To List3_finalDMM.ListCount - 1
+        DMMnum = List3_finalDMM.List(i)
+        For Each cell In DMMrange
+            If (cell.Value - DMMnum) = 0 Then
+                currWorkflowWs.Cells(cell.Row, NewActionCol) = priority_status
+            End If
+        Next cell
+    Next i
+    
+    For i = 0 To Brand_List2.ListCount - 1
+        brandString = Brand_List2.List(i)
+        'loop through the brandnamerange to find suitable match
+        For Each cell In BrandNameRange
+            If UCase(cell.Text) = UCase(brandString) Then
+                currWorkflowWs.Cells(cell.Row, NewActionCol) = priority_status
+            End If
+        Next cell
+    Next i
+    
+    currWorkflowWs.AutoFilterMode = False
+    Set DMMrange = Nothing
+    Set BrandNameRange = Nothing
+    
+End Sub
+
+'define a range by looking for a specific text title, and return all the cells to the lastrow of the sheet as a range
+Private Function defineColRange(ByVal targetWorkSheet As Worksheet, ByVal targetValue As String, _
+                                Optional ByVal visibleOnly As Boolean, Optional ByVal rtnNoTitle As Boolean, _
+                                Optional ByVal searchByColumn, Optional ByVal searchBackwards) As Range
+    Dim targetlastRow As Long
+    Dim targetlastCol As Long
+    Dim returnRange As Range
+    Dim findTarget As Range
+    
+'default visible only mode off
+
+    If IsMissing(visibleOnly) Then
+         visibleOnly = False
+    End If
+    If IsMissing(rtnNoTitle) Then
+        rtnNoTitle = False
+    End If
+    If IsMissing(searchByColumn) Then
+        searchByColumn = False
+    End If
+    If IsMissing(searchBackwards) Then
+        searchBackwards = False
+    End If
+    
+    'test if targetWorkSheet is not empty
+    If targetWorkSheet Is Nothing Then
+        MsgBox ("Worksheet pass failed!"), vbExclamation
+        Exit Function
+    End If
+
+    targetWorkSheet.Activate
+    targetlastRow = targetWorkSheet.Cells.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Row
+
+    targetlastCol = targetWorkSheet.Cells.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByColumns, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Column
+
+    'find the range
+    
+    If searchByColumn = True Then
+        Set findTarget = targetWorkSheet.Cells.Find(What:=targetValue, After:=Cells(1, 1), _
+                        LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByColumns, _
+                        SearchDirection:=xlNext, MatchCase:=False)
+    ElseIf searchBackwards = True Then
+        Set findTarget = targetWorkSheet.Cells.Find(What:=targetValue, After:=Cells(1, targetlastCol), _
+                        LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByRows, _
+                        SearchDirection:=xlPrevious, MatchCase:=False)
+    Else
+        Set findTarget = targetWorkSheet.Cells.Find(What:=targetValue, After:=Cells(1, 1), _
+                        LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByRows, _
+                        SearchDirection:=xlNext, MatchCase:=False)
+    End If
+
+    If findTarget Is Nothing Then
+        Debug.Print ("Did not find columne title "" & targetValue & "", On target worksheet: " & targetWorkSheet.Name), vbExclamation
+        Exit Function
+    Else
+        Dim tRow, tCol As Long
+        tRow = findTarget.Row
+        tCol = findTarget.Column
+        
+        On Error Resume Next
+        If visibleOnly = False Then
+            If rtnNoTitle = False Then
+                Set returnRange = targetWorkSheet.Range(Cells(tRow, tCol), Cells(targetlastRow, tCol))
+                Set defineColRange = returnRange
+            Else
+                Set returnRange = targetWorkSheet.Range(Cells(tRow + 1, tCol), Cells(targetlastRow, tCol))
+                Set defineColRange = returnRange
+            End If
+        Else
+            If rtnNoTitle = False Then
+                Set returnRange = targetWorkSheet.Range(Cells(tRow, tCol), Cells(targetlastRow, tCol)).SpecialCells(xlCellTypeVisible)
+                Set defineColRange = returnRange
+            Else
+                Set returnRange = targetWorkSheet.Range(Cells(tRow + 1, tCol), Cells(targetlastRow, tCol)).SpecialCells(xlCellTypeVisible)
+                Set defineColRange = returnRange
+            End If
+        End If
+        
+        If Err <> 0 Then
+            Debug.Print "Worksheet: " & targetWorkSheet.Name & " Column Name: " & targetValue
+        End If
+        On Error GoTo 0
+        Err.Clear
+    End If
+
+End Function
+
+Private Function SortDictionaryByKey(ByVal dict As Object _
+                  , Optional ByVal sortorder As XlSortOrder = xlAscending) As Object
+    
+    Dim arrList As Object
+    Set arrList = CreateObject("System.Collections.ArrayList")
+    
+    ' Put keys in an ArrayList
+    Dim key As Variant, coll As New Collection
+    For Each key In dict
+        arrList.Add key
+    Next key
+    
+    ' Sort the keys
+    arrList.Sort
+    
+    ' For descending order, reverse
+    If sortorder = xlDescending Then
+        arrList.Reverse
+    End If
+    
+    ' Create new dictionary
+    Dim dictNew As Object
+    Set dictNew = CreateObject("Scripting.Dictionary")
+    
+    ' Read through the sorted keys and add to new dictionary
+    For Each key In arrList
+        dictNew.Add key, dict(key)
+    Next key
+    
+    ' Clean up
+    Set arrList = Nothing
+    Set dict = Nothing
+    
+    ' Return the new dictionary
+    Set SortDictionaryByKey = dictNew
+        
+End Function
+
+'Define a range from cell found by .find method to the lastrow and user defined column offset
+Function Find_DefineCol(ByVal onWorksheet As Worksheet, ByVal cellContent As String, _
+                            Optional ByVal SearchRange As Range = Nothing) As Integer
+    Dim foundCell As Range
+
+    If SearchRange Is Nothing Then
+        Set foundCell = onWorksheet.Cells.Find(What:=cellContent, LookAt:=xlPart, LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, SearchDirection:=xlNext, MatchCase:=False)
+    Else
+        Set foundCell = SearchRange.Find(What:=cellContent, LookAt:=xlPart, LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, SearchDirection:=xlNext, MatchCase:=False)
+    End If
+    
+    If foundCell Is Nothing Then
+        Debug.Print "Worksheet: " & onWorksheet.Name & " Column Title: " & cellContent & " does not exist"
+    Else
+        Find_DefineCol = foundCell.Column
+    End If
+End Function
+
+'define a range by looking for a specific text title, and return all the cells to the lastrow of the sheet as a range
+Private Function defineColRangeX(ByVal ws As Worksheet, ByVal targetValue As String, ByVal columnsOffset As Integer, _
+                                Optional ByVal SearchRange As Range = Nothing, Optional ByVal visibleOnly As Boolean = False, _
+                                Optional ByVal RtnHeader As Boolean = False) As Range
+    Dim targetlastRow As Long
+    Dim findTarget As Range
+    Dim returnRange As Range
+    
+    'test if Ws is not empty
+    If IsEmpty(ws) Then
+        MsgBox ("Worksheet pass failed!"), vbExclamation
+        Exit Function
+    End If
+
+    ws.Activate
+    targetlastRow = ws.Cells.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Row
+
+    'find the range
+    
+    If SearchRange Is Nothing Then
+        Set findTarget = ws.Cells.Find(What:=targetValue, After:=Cells(1, 1), _
+                        LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByRows, _
+                        SearchDirection:=xlNext, MatchCase:=False)
+    Else
+        Set findTarget = SearchRange.Cells.Find(What:=targetValue, After:=SearchRange.Cells(1, 1), _
+                        LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByRows, _
+                        SearchDirection:=xlNext, MatchCase:=False)
+    End If
+
+    If findTarget Is Nothing Then
+        Debug.Print "Did not find columne title: " & targetValue & " on Worksheet: " & ws.Name
+        Exit Function
+    Else
+        Dim tRow, tCol As Long
+        tRow = findTarget.Row
+        tCol = findTarget.Column
+        
+        If visibleOnly = False Then
+            If RtnHeader = True Then
+                Set returnRange = ws.Range(ws.Cells(tRow, tCol), ws.Cells(targetlastRow, tCol + columnsOffset))
+                Set defineColRangeX = returnRange
+            Else
+                Set returnRange = ws.Range(ws.Cells(tRow + 1, tCol), ws.Cells(targetlastRow, tCol + columnsOffset))
+                Set defineColRangeX = returnRange
+            End If
+        Else
+            If RtnHeader = True Then
+                Set returnRange = ws.Range(ws.Cells(tRow, tCol), ws.Cells(targetlastRow, tCol + columnsOffset)).SpecialCells(xlCellTypeVisible)
+                Set defineColRangeX = returnRange
+            Else
+                Set returnRange = ws.Range(ws.Cells(tRow + 1, tCol), ws.Cells(targetlastRow, tCol + columnsOffset)).SpecialCells(xlCellTypeVisible)
+                Set defineColRangeX = returnRange
+            End If
+        End If
+        
+    End If
+
+End Function
