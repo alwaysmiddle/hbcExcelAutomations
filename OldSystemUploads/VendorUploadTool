@@ -1,0 +1,147 @@
+'This program will have no UI, it will run on the excel sheet, save under the path of original sheet
+Sub Bay_Vendor_Upload()
+
+'manipulate the current sheet into the format that we want
+ Dim wb As Workbook
+ Dim ws As Worksheet
+ Dim changeRange, cell As Range
+ Dim Fpath, Fname As String
+ 
+ Set wb = Application.ActiveWorkbook
+ Set ws = wb.Worksheets(1)
+ Application.DisplayAlerts = False 'surpress alerts for overwrite when pasting
+ 
+ 'unhide all columns, all rows
+    ws.Columns.EntireColumn.Hidden = False
+    ws.Rows.EntireRow.Hidden = False
+ 
+ 'change the first column to RF 12, and title to RF12
+    Set cell = ws.Cells.Find(What:="REPORT CODE: ", After:=ws.Range("A1"), LookAt:=xlPart, _
+                    LookIn:=xlFormulas, SearchOrder:=xlByRows, SearchDirection:=xlNext, _
+                    MatchCase:=False)
+    If Not cell Is Nothing Then
+        cell = "REPORT CODE: RF12"
+    End If
+    
+    Set changeRange = defineColRangeX(ws, "Code", 0, ws.Range("5:9"))
+    
+    changeRange.Value = "RF12"
+
+ 'add the new titles on the end of columns
+    Set changeRange = ws.Range("AQ8:AV9")
+    changeRange.Copy
+    
+    ws.Range("AW8").PasteSpecial xlPasteAll
+    
+    ws.Range("AW8") = "Final"
+    ws.Range("AY8") = "Final"
+    ws.Range("BA8") = "Final"
+    
+ 'then do the copy orperation from the correct columns
+    Set changeRange = defineColRangeX(ws, "english", 0, ws.Range("BA5:BA9"))
+    changeRange.Copy ws.Range("AW10")
+    changeRange.Copy ws.Range("AX10")
+    
+    changeRange.Clear
+    
+    Set changeRange = defineColRangeX(ws, "french", 0, ws.Range("BB5:BB9"))
+    changeRange.Copy ws.Range("AY10")
+    
+    changeRange.Clear
+    
+    Set changeRange = defineColRangeX(ws, "french", 0, ws.Range("AZ5:AZ9"))
+    changeRange.Value = "Nouveauté! La description suivra bientôt."
+
+    Set changeRange = defineColRangeX(ws, "Bullets", 0, ws.Range("BC5:BC9"))
+    changeRange.Copy ws.Range("BA10")
+ 'delete everything after column BC
+    ws.Range("BC1", Cells(1, ws.UsedRange.Columns.Count)).EntireColumn.Delete shift:=xlToLeft
+
+'save the workbook as default workbook format and csv version
+ 'get the path of current workbook
+    Fpath = wb.Path
+    Fname = wb.Name
+    
+    Fpath = Fpath & "\Ready for Upload\"
+    Fname = "UPLOAD" & Right$(Fname, Len(Fname) - 4)
+ 'create a folder for upload if it doesn't exist already
+    With CreateObject("Scripting.FileSystemObject")
+        If Not .FolderExists(Fpath) Then .CreateFolder Fpath
+    End With
+    
+    wb.SaveAs Filename:=Fpath & Fname, FileFormat:=xlWorkbookDefault
+    wb.SaveAs Filename:=Fpath & Left$(Fname, Len(Fname) - 5) & ".csv", FileFormat:=xlCSV
+    
+    Application.DisplayAlerts = True
+End Sub
+
+'define a range by looking for a specific text title, and return all the cells to the lastrow of the sheet as a range
+Private Function defineColRangeX(ByVal ws As Worksheet, ByVal targetValue As String, ByVal columnsOffset As Integer, _
+                                Optional ByVal SearchRange As Range = Nothing, Optional ByVal visibleOnly As Boolean = False, _
+                                Optional ByVal RtnHeader As Boolean = False) As Range
+    Dim targetlastRow As Long
+    Dim findTarget As Range
+    Dim returnRange As Range
+    
+    'test if Ws is not empty
+    If ws Is Nothing Then
+        MsgBox ("Worksheet pass failed!"), vbExclamation
+        Exit Function
+    End If
+
+    ws.Activate
+    targetlastRow = ws.Cells.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Row
+
+    'find the range
+    
+    If SearchRange Is Nothing Then
+        Set findTarget = ws.Cells.Find(What:=targetValue, After:=Cells(1, 1), _
+                        LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByRows, _
+                        SearchDirection:=xlNext, MatchCase:=False)
+    Else
+        Set findTarget = SearchRange.Cells.Find(What:=targetValue, After:=SearchRange.Cells(1, 1), _
+                        LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByRows, _
+                        SearchDirection:=xlNext, MatchCase:=False)
+    End If
+
+    If findTarget Is Nothing Then
+        Debug.Print ("Did not find columne title """ & targetValue & ""), vbExclamation
+        Exit Function
+    Else
+        Dim tRow, tCol As Long
+        tRow = findTarget.Row
+        tCol = findTarget.Column
+        
+        On Error Resume Next
+        If visibleOnly = False Then
+            If RtnHeader = True Then
+                Set returnRange = ws.Range(Cells(tRow, tCol), Cells(targetlastRow, tCol + columnsOffset))
+                Set defineColRangeX = returnRange
+            Else
+                Set returnRange = ws.Range(Cells(tRow + 1, tCol), Cells(targetlastRow, tCol + columnsOffset))
+                Set defineColRangeX = returnRange
+            End If
+        Else
+            If RtnHeader = True Then
+                Set returnRange = ws.Range(Cells(tRow, tCol), Cells(targetlastRow, tCol + columnsOffset)).SpecialCells(xlCellTypeVisible)
+                Set defineColRangeX = returnRange
+            Else
+                Set returnRange = ws.Range(Cells(tRow + 1, tCol), Cells(targetlastRow, tCol + columnsOffset)).SpecialCells(xlCellTypeVisible)
+                Set defineColRangeX = returnRange
+            End If
+        End If
+        
+        If Err <> 0 Then
+            Debug.Print "Worksheet: " & ws.Name & " Column Name: " & targetValue
+        End If
+        On Error GoTo 0
+        Err.Clear
+    End If
+
+End Function
