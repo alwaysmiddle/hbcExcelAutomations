@@ -1,0 +1,1587 @@
+Option Explicit
+
+Public templateLocation, initialFolder, OHtemplateLocation, savedFolder, rawDataFile_Fullpath As String
+Public fileDialogue, titleDictionary As Object
+Public cleared_SLA_success As Boolean
+
+Public startWb, SLAwb, rawDataWb, ExceptionWb, OH_wb As Workbook
+Public startWs, SLAws1, SLAws2, SLAws3, rawDataWs, OH_ws As Worksheet
+'constants for SLA generation macro
+
+Private Sub CmdBtn_ClearSLA_Click()
+    Dim choice As Integer
+    Dim LastCell, copyRange As Range
+    Dim ws As Worksheet
+    
+   'reading from dictionary titles
+    Dim key As Variant
+    Dim stringHolder As String
+   'progress bar updates
+    Dim progress, TotalProgress As Integer
+
+ 'check if workbooks have been linked
+    If Link_SLA_Button.Locked = False Then
+        Label6_LoadFileWarning = "Error: Please link SLA worksheet first"
+        Exit Sub
+    End If
+    
+ 'check case for user confirmation
+    choice = MsgBox("Wipe all data other than: ""Worksheet: " & SLA_ComboBox1.Value & """ then move data to ""Worksheet: " & SLA_ComboBox2.Value & """?", vbYesNo)
+    
+    Select Case choice
+        Case vbYes
+            Application.Calculation = xlCalculationManual
+            Label4_CurrentProcess = "Clearing Old SLA:"
+            Label5_subProcess = "Moving data"
+            DoEvents
+            
+           'delete data from MoveTo sheet, slaws2
+            If SLAws1 Is Nothing Or SLAws2 Is Nothing Then
+                Label6_LoadFileWarning = "Error: Congratulations, you found a bug! SLAws1 or SLAws2 link is lost!!"
+                Exit Sub
+            End If
+           'jump to data clear to skip copy process if the sheets are the same
+            If SLA_ComboBox1.Value = SLA_ComboBox2.Value Then
+                progress = 1
+                TotalProgress = titleDictionary.Count
+                GoTo DataClear
+            End If
+            
+            If Application.CountA(SLAws2.UsedRange) > 0 Then
+                'delete things on target sheet
+                Set LastCell = FindLastCell(SLAws2)
+                
+                If LastCell.Row > 3 Then
+                    SLAws2.Range("A4", LastCell).Delete Shift:=xlUp
+                End If
+            Else
+                'determine if SLAws2 is missing everything
+                MsgBox ("Worksheet: " & SLAws2.Name & " is missing title bar data, please check!")
+            End If
+            
+            progress = 0
+            TotalProgress = titleDictionary.Count
+            
+           'move shit to slaws1 from slaws2
+            If Application.CountA(SLAws1.UsedRange) > 0 Then
+                If SLAws1.AutoFilterMode Then
+                    SLAws1.AutoFilterMode = False
+                End If
+                
+                SLAws1.Columns.EntireColumn.Hidden = False
+                SLAws1.Rows.EntireRow.Hidden = False
+                
+                Set LastCell = FindLastCell(SLAws1)
+                
+                If LastCell.Row > 3 Then
+                    'if missing titles, then we copy the whole sheet over, then change the date
+                    SLAws1.Range("A4", LastCell).Copy SLAws2.Range("A4")
+                    progress = 1
+                    ProgressBar_SLA = progress / TotalProgress * 100
+                    DoEvents
+                Else
+                    'exiting condition when there is no data after titles from data source sheet, which is unlikely, probably due to user mistake
+                    Label5_subProcess = "Error: Worksheet " & SLAws1.Name & " sheet has no data, paste data under title to continue operations"
+                    Exit Sub
+                End If
+            End If
+            
+DataClear:
+           'delete shit from other days
+            Label5_subProcess = "Deleting data from other sheets"
+            DoEvents
+            
+           For Each ws In SLAwb.Worksheets
+            If ws.AutoFilterMode Then
+                    ws.AutoFilterMode = False
+            End If
+                
+            SLAws2.Columns.EntireColumn.Hidden = False
+            SLAws2.Rows.EntireRow.Hidden = False
+           
+            For Each key In titleDictionary
+                stringHolder = CStr(key)
+                
+                Set LastCell = FindLastCell(ws)
+                If UCase(ws.Name) = UCase(stringHolder) And Not UCase(ws.Name) = UCase(SLAws2.Name) Then
+                    'deletion
+                    ws.Range("A4", LastCell.End(xlDown)).EntireRow.Delete Shift:=xlUp
+                    
+                    Set LastCell = FindLastCell(ws)
+                    ws.Range(LastCell.Offset(1, 1), LastCell.End(xlToRight)).EntireColumn.Delete Shift:=xlToLeft
+                    
+                    'hide other worksheets
+                    If UCase(ws.Name) = UCase(SLA_ComboBox3.Value) Then
+                        If Not ws.Visible Then
+                            ws.Visible = xlSheetVisible
+                        End If
+                    Else
+                        If ws.Visible Then
+                            ws.Visible = xlSheetHidden
+                        End If
+                    End If
+                    
+                    progress = progress + 1
+                    ProgressBar_SLA = progress / TotalProgress * 100
+                    DoEvents
+                ElseIf UCase(ws.Name) = UCase(SLAws2.Name) Then
+                    If Not ws.Visible Then
+                            ws.Visible = xlSheetVisible
+                    End If
+                End If
+            Next key
+           Next ws
+            'show workbook
+            SLAwb.Activate
+            SLA_Userform.Show vbModeless
+            
+            cleared_SLA_success = True
+            
+            'lock clear week button
+            CmdBtn_ClearSLA.Locked = True
+            CmdBtn_ClearSLA.BackColor = rgbGrey
+        Case vbNo
+            Label5_subProcess = "Clear SLA action cancelled"
+            Exit Sub
+    End Select
+    
+End Sub
+
+Private Sub CmdBtn_Exception_Click()
+    'this is for loading the exception data
+    Set fileDialogue = Application.FileDialog(msoFileDialogFilePicker)
+    
+    With fileDialogue
+        .AllowMultiSelect = False
+        .Filters.Clear
+        .Filters.Add "Comma-separated values files", "*.csv"
+        .Filters.Add "All files", "*.*"
+        .title = ""
+        
+        If Not initialFolder = "" Then
+            .InitialFileName = initialFolder
+        Else
+            .InitialFileName = "C:\"
+        End If
+        
+        If .Show = -1 Then
+            'add a new workbook, or set it to already opened wb if it's there, then clean the whole workbook
+            Set ExceptionWb = GetWorkbook(.SelectedItems(1))
+            Label5_subProcess = "Loaded exception file: " & ExceptionWb.Name
+        Else
+            Debug.Print "User decided to cancel loading parts into template."
+            Label5_subProcess = "Load exception file cancelled!"
+            Exit Sub
+        End If
+    End With
+    
+    SLA_Userform.Show vbModeless
+End Sub
+
+Private Sub CmdBtn_Folder1_Click()
+    If savedFolder = "" Then
+        Shell Pathname:="explorer.exe /root,C:\", windowstyle:=vbNormalFocus
+    Else
+        Shell Pathname:="explorer.exe /root," & savedFolder & "\", windowstyle:=vbNormalFocus
+    End If
+End Sub
+
+Private Sub CmdBtn_Loadparts_Click()
+ 'needed for progress, reading selected items, and filter list
+    Dim selected_Var As Variant
+    Dim priority_Arr() As String
+    Dim I, progress, total_progress As Long
+ 'process selected files
+    Dim openedWb As Workbook
+    Dim openedWs As Worksheet
+    Dim copyRange As Range
+    Dim lastRow As Long
+    Dim temp, holderName As String
+
+ 'start with user loaded items, read them into SLA template
+    Set fileDialogue = Application.FileDialog(msoFileDialogFilePicker)
+    initialFolder = GetSetting("BayMacroSetting", "SLA_Generate_Tool", "Initial_Folder")
+    
+    Label4_CurrentProcess = "Constructing Raw Data File:"
+    Label5_subProcess = "Loading files into a new Workbook"
+    
+    With fileDialogue
+        .AllowMultiSelect = True
+        .Filters.Clear
+        .Filters.Add "Excel files", "*.xlsx"
+        .Filters.Add "All files", "*.*"
+        .title = ""
+        
+        If Not initialFolder = "" Then
+            .InitialFileName = initialFolder
+        Else
+            .InitialFileName = "C:\"
+        End If
+        
+        If .Show = -1 Then
+            'add a new workbook, or set it to already opened wb if it's there, then clean the whole workbook
+            Application.DisplayAlerts = False
+            If rawDataWb Is Nothing Then
+                Set rawDataWb = Workbooks.Add
+                holderName = rawDataWb.Name
+            Else
+                Set rawDataWb = GetWorkbook(rawDataFile_Fullpath)
+                For Each openedWs In rawDataWb.Worksheets
+                    openedWs.UsedRange.Delete Shift:=xlUp
+                Next openedWs
+            End If
+            ListBox1_ProcessedFile.Clear
+            Application.DisplayAlerts = True
+        Else
+            Debug.Print "User decided to cancel loading parts into template."
+            Exit Sub
+        End If
+        
+    End With
+    
+    Application.ScreenUpdating = False
+ 'loop through the selected items, filter OH > OO using an array, update the progress bar, keep format consistent
+    Set rawDataWs = rawDataWb.Worksheets(1)
+    
+    If fileDialogue.SelectedItems.Count > 1 Then
+        total_progress = fileDialogue.SelectedItems.Count
+        progress = 0
+    Else
+        total_progress = 1
+    End If
+    
+    priority_Arr = Split("Report_OH,Report_OO", ",")
+    
+   'loop through priority list
+    For I = 0 To UBound(priority_Arr)
+        'looping through each selected items
+        For Each selected_Var In fileDialogue.SelectedItems
+            temp = CStr(selected_Var)
+        
+            If InStr(1, temp, priority_Arr(I), vbTextCompare) > 0 Then
+                'update the lastrow of startwb
+                If WorksheetFunction.CountA(rawDataWs.UsedRange) = 0 Then
+                    lastRow = 0
+                Else
+                    lastRow = rawDataWs.Cells.Find(What:="*", _
+                        After:=Range("A1"), _
+                        LookAt:=xlPart, _
+                        LookIn:=xlFormulas, _
+                        SearchOrder:=xlByRows, _
+                        SearchDirection:=xlPrevious, _
+                        MatchCase:=False).Row
+                End If
+
+                'process file, paste into sla template
+                Set openedWb = Workbooks.Open(Filename:=temp, UpdateLinks:=False)
+                Set openedWs = openedWb.Worksheets(1)
+                savedFolder = openedWb.Path
+                
+                If progress = 0 Then
+                    Set copyRange = defineColRangeX(openedWs, "GMM", 94, openedWs.Range("A8:B8"), , True)
+                    copyRange.Copy rawDataWs.Cells(lastRow + 1, 1)
+                Else
+                    Set copyRange = defineColRangeX(openedWs, "GMM", 94, openedWs.Range("A8:B8"))
+                    copyRange.Copy rawDataWs.Cells(lastRow + 1, 1)
+                End If
+
+                'update progress bar
+                If total_progress > 0 Then
+                    progress = progress + 1
+                    ProgressBar_SLA = (progress / total_progress) * 100
+                    DoEvents
+                End If
+                
+                'add to processed list
+                ListBox1_ProcessedFile.AddItem Right$(openedWb.Name, Len(openedWb.Name) - 14)
+                
+                openedWb.Close savechanges:=False
+            End If
+            
+            SLA_Userform.Show vbModeless
+        Next selected_Var
+    Next I
+    
+    If Application.WorksheetFunction.CountA(rawDataWs.UsedRange) = 0 Then
+        Application.DisplayAlerts = True
+        Application.ScreenUpdating = True
+        MsgBox "Error: Generating rawdata file failed!", vbCritical
+        rawDataWb.Close savechanges:=False
+        Exit Sub
+    End If
+    
+    Label5_subProcess = "Saving raw data workbook"
+    DoEvents
+    
+    temp = savedFolder & "\" & "BAY Not Live OH-OO Raw Data " & Format(Me.Date_Pick.Value, "MM.DD.YY") & ".xlsx"
+    
+    Application.DisplayAlerts = False
+    
+    'following code is written this way because there is an error case where save overwrite fails because the the file trying to save
+    'is still open, this was caused by re-running the macro previous loop, if something goes wrong
+    'then the user tries to re-generate raw data file, but the old generated file is fully saved and open
+    
+    On Error Resume Next
+    rawDataWb.SaveAs Filename:=temp, FileFormat:=xlWorkbookDefault, ConflictResolution:=XlSaveConflictResolution.xlLocalSessionChanges
+    
+    If Err.Number = 1004 Then
+        Dim tempbook As Workbook
+        Set tempbook = GetWorkbook(temp)
+        tempbook.Close savechanges:=False
+        
+        Set rawDataWb = Workbooks(holderName)
+        rawDataWb.SaveAs Filename:=temp, FileFormat:=xlWorkbookDefault, ConflictResolution:=XlSaveConflictResolution.xlLocalSessionChanges
+    End If
+    
+    On Error GoTo 0
+    Err.Clear
+     
+    rawDataFile_Fullpath = rawDataWb.FullName
+    
+    Label5_subProcess = "File saved to: " & savedFolder
+    
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+    
+    SLA_Userform.Show vbModeless
+End Sub
+
+Private Sub CmdBtn_RefreshDate_Click()
+    If Link_SLA_Button.Locked = False Then
+        Label6_LoadFileWarning = "Error: Please link SLA first!"
+        Exit Sub
+    End If
+    
+    Dim ws, ws1 As Worksheet
+    Dim currentDay As String
+    
+    
+   'set the new not live sheet
+    On Error Resume Next
+    Set ws1 = SLAwb.Worksheets("New Not Live")
+    
+    If Err.Number <> 0 Then
+        Label6_LoadFileWarning = "Error: Can not find ""New Not Live"" sheet on SLA workbook!"
+        On Error GoTo 0
+        Exit Sub
+    End If
+    
+    ws1.Range("A2") = Format(Me.Date_Pick.Value - Weekday(Me.Date_Pick.Value) + 2, "MM/DD/YYYY") & "-" _
+                        & Format(Me.Date_Pick.Value - Weekday(Me.Date_Pick.Value) + 8, "MM/DD/YYYY")
+        
+    For Each ws In SLAwb.Worksheets
+        
+        currentDay = UCase(ws.Name)
+        With Me.Date_Pick
+            Select Case currentDay
+                Case UCase("Previous Friday")
+                    ws.Range("A1") = Format(.Value - Weekday(.Value) - 2, "MM/DD/YYYY")
+                Case UCase("Monday")
+                    ws.Range("A1") = Format(.Value - Weekday(.Value) + 2, "MM/DD/YYYY")
+                Case UCase("Tuesday")
+                    ws.Range("A1") = Format(.Value - Weekday(.Value) + 3, "MM/DD/YYYY")
+                Case UCase("Wednesday")
+                    ws.Range("A1") = Format(.Value - Weekday(.Value) + 4, "MM/DD/YYYY")
+                Case UCase("Thursday")
+                    ws.Range("A1") = Format(.Value - Weekday(.Value) + 5, "MM/DD/YYYY")
+                Case UCase("Friday")
+                    ws.Range("A1") = Format(.Value - Weekday(.Value) + 6, "MM/DD/YYYY")
+            End Select
+        End With
+    Next ws
+End Sub
+
+Private Sub CmdBtn_SaveSLA_Click()
+    'save SLA only if SLA is finished generating
+    'check if sla part II button is locked, and if slawb is refering to something
+    'save overwrite if the file exists, if the macro is closed half way and lost the reference point
+    'it won't create a situation where reference object can't find generated workbook like when adding workbooks
+    'so we can always save using SLAwb reference, and then overwrite the folder
+    
+    If Link_SLA_Button.Locked = False Then
+        Label6_LoadFileWarning = "Error: Please link SLA file first"
+        Exit Sub
+    End If
+    
+    If savedFolder = "" Then
+        Label6_LoadFileWarning = "Error: Save Path missing"
+        Exit Sub
+    End If
+    
+    On Error Resume Next
+    SLAwb.SaveAs Filename:=savedFolder & "\BAY SLA Report " & Format(Me.Date_Pick.Value, "MM.DD.YYYY") & ".xlsx", FileFormat:=xlWorkbookDefault, _
+                ConflictResolution:=XlSaveConflictResolution.xlLocalSessionChanges
+    If Err.Number = 0 Then
+        Label5_subProcess = "SLA file saved successfully to: " & savedFolder
+    Else
+        Label6_LoadFileWarning = "Error: SLA saving encountered Error!"
+    End If
+    On Error GoTo 0
+    Err.Clear
+    
+End Sub
+
+Private Sub CmdBtn_SetIniFolder_Click()
+    Set fileDialogue = Application.FileDialog(msoFileDialogFolderPicker)
+    
+    With fileDialogue
+        .AllowMultiSelect = False
+        .title = "Pick initialization folder"
+        
+        If .Show = -1 Then
+            initialFolder = fileDialogue.SelectedItems(1)
+            SaveSetting "BayMacroSetting", "SLA_Generate_Tool", "Initial_Folder", initialFolder
+            Label3_Initial_Path = initialFolder
+        Else
+            Label5_subProcess = "Find template location cancelled!"
+        End If
+    End With
+End Sub
+
+Private Sub CmdBtn_SetOH_Loc_Click()
+    Set fileDialogue = Application.FileDialog(msoFileDialogFilePicker)
+    
+    With fileDialogue
+        .AllowMultiSelect = False
+        .Filters.Clear
+        .Filters.Add "Excel files", "*.xlsx"
+        .Filters.Add "All files", "*.*"
+        .title = "Please select SLA template"
+        
+        'if user selected item
+        If .Show = -1 Then
+            OHtemplateLocation = .SelectedItems(1)
+            SaveSetting "BayMacroSetting", "SLA_Generate_Tool", "OH_Template_Default", OHtemplateLocation
+            Label7_OHLocation = OHtemplateLocation
+        Else
+        'if user cancelled
+            Label5_subProcess = "Canceled setting template location."
+        End If
+    End With
+End Sub
+
+'relinks the already generated raw data file, or re link the file in case the original file lost its link
+Private Sub CmdBtn_SetRawData_Click()
+    If rawDataFile_Fullpath = "" Then
+        Set fileDialogue = Application.FileDialog(msoFileDialogFilePicker)
+        
+        With fileDialogue
+            .AllowMultiSelect = False
+            .Filters.Clear
+            .Filters.Add "Excel files", "*.xlsx"
+            .Filters.Add "All files", "*.*"
+            .title = "Raw Data File Link:"
+            
+            If Not initialFolder = "" Then
+                .InitialFileName = initialFolder
+            Else
+                .InitialFileName = "C:\"
+            End If
+            
+            'case where user decide to open a file
+            If .Show = -1 Then
+                Set rawDataWb = GetWorkbook(fileDialogue.SelectedItems(1))
+                Set rawDataWs = rawDataWb.Worksheets("Sheet1")
+                If Not rawDataWb Is Nothing Then
+                    rawDataFile_Fullpath = rawDataWb.FullName
+                    savedFolder = rawDataWb.Path
+                Else
+                    MsgBox ("Linking file failed, try again!"), vbCritical
+                End If
+            Else
+                Label5_subProcess = "User decided to cancel linking Raw data file."
+                Exit Sub
+            End If
+            
+        End With
+        
+        Else
+        Set rawDataWb = GetWorkbook(rawDataFile_Fullpath)
+    End If
+
+    SLA_Userform.Show vbModeless
+End Sub
+
+Private Sub CmdBtn_SLAtemplate_Part1_Click()
+    Application.Calculation = xlCalculationManual
+    ActiveSheet.DisplayPageBreaks = False
+   'variable declaration
+    'OTB month vlookup
+    Dim changeRange, cell, lookupRange, RefRange As Range
+    Dim ws1 As Worksheet
+    
+    'copying raw data into SLA
+    Dim copyRange As Range
+    Dim lastRow As Long
+    
+    If templateLocation = "" Then
+        Label6_LoadFileWarning = "Error: The path to SLA template is not set, please set template path!"
+        Exit Sub
+    End If
+
+    If rawDataWb Is Nothing Or IsEmpty(rawDataWb) Then
+        Label6_LoadFileWarning = "This program has lost link to original data source, please use 'Load SLA parts' -> 'Set Raw Data Source' to re-establish the link!"
+        Exit Sub
+    Else
+        Set rawDataWb = GetWorkbook(rawDataFile_Fullpath)
+    End If
+    
+ 'load raw data into SLA template
+    rawDataWb.Activate
+    Set rawDataWs = rawDataWb.Worksheets("Sheet1")
+    
+    If WorksheetFunction.CountA(rawDataWs.UsedRange) = 0 Then
+        Label6_LoadFileWarning = "Error: Raw data file is empty!"
+        Exit Sub
+    End If
+    
+    Application.ScreenUpdating = False
+    
+    Label4_CurrentProcess = "Process SLA template:"
+    
+ 'open the workbook for template of SLA, copying data into template
+    Label5_subProcess = "Copying Data into template"
+    DoEvents
+    If Not startWb Is Nothing Then
+        startWb.Close Save:=False
+    End If
+    
+    'surpress alerts because re-running the macro on the same workbook is problematic, since older formulae are already overwritten.
+    Application.DisplayAlerts = False
+    Set startWb = Workbooks.Open(templateLocation)
+    Application.DisplayAlerts = True
+    
+    SLA_Userform.Show vbModeless
+    
+    Set startWs = startWb.Worksheets("Sheet1")
+    
+    If startWs Is Nothing Then
+        Label6_LoadFileWarning = "Error: Can not find Raw Data sheet!"
+        Exit Sub
+    End If
+    
+    If WorksheetFunction.CountA(startWs.UsedRange) = 0 Then
+        MsgBox ("Critical Error encountered, template file format is not as expected!"), vbCritical
+        Exit Sub
+    Else
+        lastRow = startWs.Cells.Find(What:="*", _
+            After:=Range("A1"), _
+            LookAt:=xlPart, _
+            LookIn:=xlFormulas, _
+            SearchOrder:=xlByRows, _
+            SearchDirection:=xlPrevious, _
+            MatchCase:=False).Row
+    End If
+
+    Set copyRange = defineColRangeX(rawDataWs, "GMM", 31, rawDataWs.Range("A1:C1"))
+    copyRange.Copy startWs.Cells(lastRow + 1, 2)
+
+    Set copyRange = defineColRangeX(rawDataWs, "OTB Month", 41, rawDataWs.Range("AI1:BR1"))
+    copyRange.Copy startWs.Cells(lastRow + 1, 35)
+
+    Set copyRange = defineColRangeX(rawDataWs, "PO Number", 17, rawDataWs.Range("BY1:CP1"))
+    copyRange.Copy startWs.Cells(lastRow + 1, 79)
+    
+    'rawDataWb.Close savechanges:=False
+    
+'concatenate part
+    Label5_subProcess = "Updating concatenation"
+    DoEvents
+    Set copyRange = defineColRangeX(startWs, "concatenate", 0, startWs.Range("AH1:AH3"))
+    Debug.Print copyRange.Address
+    
+    copyRange.FillDown
+    startWs.Calculate
+
+    copyRange.Copy
+    startWs.Range("AH4").PasteSpecial xlPasteValues
+
+'then filter down OTBmonth, and copy them down to another sheet, we will have vlookup later
+    Label5_subProcess = "Filtering OTB month for vlookup"
+    DoEvents
+    
+    If startWs.AutoFilterMode Then
+        startWs.AutoFilterMode = False
+    End If
+    
+    startWs.Range("3:3").AutoFilter field:=35, Criteria1:="<>"
+    
+    Set copyRange = defineColRangeX(startWs, "concatenate", 1, startWs.Range("AH1: AH3"), True, True)
+    
+    'delete other sheets other than startws
+    For Each ws1 In startWb.Worksheets
+        If Not ws1.Name = startWs.Name Then
+            ws1.Delete
+        End If
+    Next ws1
+    Set ws1 = startWb.Worksheets.Add
+    
+    copyRange.Copy ws1.Range("A1")
+    ws1.UsedRange.RemoveDuplicates Columns:=1, Header:=xlYes
+    
+    startWs.ShowAllData
+    
+'start off by removing duplicates of column AH
+    Label5_subProcess = "Removing Duplicates"
+    DoEvents
+    
+    startWs.UsedRange.RemoveDuplicates Columns:=34, Header:=xlYes
+    startWs.Range("3:3").AutoFilter field:=76, Criteria1:=""
+    
+    startWs.ShowAllData
+    
+'vlookup OTB month
+    Label5_subProcess = "Vlookup to update OTB Month"
+    DoEvents
+    Set copyRange = defineColRangeX(startWs, "OTB Month", 0, startWs.Range("AI3"))
+    Set lookupRange = defineColRangeX(startWs, "Concatenate", 0, startWs.Range("AH3"))
+    Set RefRange = defineColRangeX(ws1, "Concatenate", 1)
+    
+    copyRange.Value = vbalookup(lookupRange, RefRange, 2, ProgressBar_SLA)
+    copyRange.NumberFormat = "000000"
+   
+'delete the temporary sheet, and clean up
+    Application.DisplayAlerts = False
+    ws1.Delete
+    Application.DisplayAlerts = True
+    rawDataWb.Close savechanges:=False
+    
+'lock sla part I button
+    CmdBtn_SLAtemplate_Part1.Locked = True
+    CmdBtn_SLAtemplate_Part1.BackColor = rgbGrey
+    
+    SLA_Userform.Show vbModeless
+    
+    Application.ScreenUpdating = True
+    ActiveSheet.DisplayPageBreaks = True
+End Sub
+
+Private Sub CmdBtn_SLAtemplate_Part2_Click()
+    Application.Calculation = xlCalculationManual
+  'check all the operating conditions to make sure if everything is present
+    If Not Link_SLA_Button.Locked Or SLAwb Is Nothing Then
+        Label6_LoadFileWarning = "Error: unexpected error has occured, please re-link SLA file!"
+        Exit Sub
+    End If
+    
+    If startWb Is Nothing Then
+        Label6_LoadFileWarning = "Error: Macro has no link to raw data sheet."
+        Exit Sub
+    End If
+    
+    If ExceptionWb Is Nothing Then
+        Label6_LoadFileWarning = "Error: please load exception before continuing!"
+        Exit Sub
+    End If
+    
+    Label6_LoadFileWarning = ""
+    
+   'declare variables
+    Dim copyRange, cell, LastCell, changeRange, lookupRange, RefRange As Range
+     'special range for exceptions
+    Dim exceptionRange As Range
+     'hide other worksheets
+    Dim key As Variant
+    Dim holderString As String
+    Dim ws As Worksheet
+     'progress bar variables
+     Dim progress, TotalProgress As Long
+     'Matching SLA status
+     Dim noMatchesFromYesterday As Boolean
+     
+    'move data from slaws1 to slaws2 if sheet is not cleared for new week
+    'add condition if slaws1 and slaws2 are the same, then skip copying
+    If cleared_SLA_success = False And Not SLA_ComboBox1.Value = SLA_ComboBox2.Value Then
+        Label5_subProcess = "Moving data"
+        DoEvents
+         
+        'delete data from MoveTo sheet, slaws2
+        If SLAws1 Is Nothing Or SLAws2 Is Nothing Then
+            Label6_LoadFileWarning = "Error: Congratulations, you found a bug! SLAws1 or SLAws2 link is lost!!"
+            Exit Sub
+        End If
+         
+         If Application.CountA(SLAws2.UsedRange) > 0 Then
+             'delete things on target sheet
+             Set LastCell = FindLastCell(SLAws2)
+             
+             If LastCell.Row > 3 Then
+                 SLAws2.Range("A4", LastCell).Delete Shift:=xlUp
+             End If
+         End If
+         
+         SLAws1.Activate
+         
+        'move shit to slaws1 from slaws2
+         If Application.CountA(SLAws1.UsedRange) > 0 Then
+             If SLAws1.AutoFilterMode Then
+                 SLAws1.AutoFilterMode = False
+             End If
+             
+             SLAws1.Columns.EntireColumn.Hidden = False
+             SLAws1.Rows.EntireRow.Hidden = False
+             
+             Set LastCell = FindLastCell(SLAws1)
+             
+             If LastCell.Row > 3 Then
+                SLAws1.Range("A4", LastCell).Copy SLAws2.Range("A4")
+                SLAws1.Range("A4", LastCell).Clear
+             Else
+                 'exiting condition when there is no data after titles from data source sheet, which is unlikely, probably due to user mistake
+                 Label6_LoadFileWarning = "Error: Worksheet " & SLAws1.Name & " sheet has no data, paste data under title to continue operations"
+                 Exit Sub
+             End If
+             
+         End If
+    End If
+    
+    'copy into older sla file
+    'IMPORTANT: slaws1 and slaws3 may refer to the same sheet, becareful
+    Set LastCell = FindLastCell(SLAws3)
+    If SLAws3.AutoFilterMode Then
+        On Error Resume Next
+        SLAws3.ShowAllData
+        On Error GoTo 0
+    End If
+    
+    If LastCell.Row > 3 Then
+        SLAws3.Range("A4", LastCell).Delete Shift:=xlUp
+    End If
+    
+    Set LastCell = FindLastCell(startWs) 'lastcell is on startws now
+      
+    startWs.Range("A4", LastCell).Copy SLAws3.Range("A4")
+    
+    SLAws3.Columns.EntireColumn.Hidden = False
+    SLAws3.Rows.EntireRow.Hidden = False
+    
+    startWb.Close savechanges:=False
+    
+        'hide the old sheet and then unhide the today's sheet
+    For Each key In titleDictionary
+        holderString = CStr(key)
+        
+        For Each ws In SLAwb.Worksheets
+            If UCase(ws.Name) = UCase(holderString) Then
+                If UCase(ws.Name) = UCase(SLA_ComboBox3.Value) Or UCase(ws.Name) = UCase(SLA_ComboBox2.Value) Then
+                    If Not ws.Visible Then
+                        ws.Visible = xlSheetVisible
+                    End If
+                Else
+                    If ws.Visible Then
+                        ws.Visible = xlSheetHidden
+                    End If
+                End If
+            End If
+        Next ws
+    Next key
+    
+    
+    'vlookup from yesterday's SLA
+    Label5_subProcess = "Pulling yesterday's workflow status"
+    DoEvents
+
+    Set LastCell = FindLastCell(SLAws3, True)
+    Set changeRange = SLAws3.Range("BY4", "BY" & LastCell.Row)
+    Set lookupRange = SLAws3.Range("AH4", "AH" & LastCell.Row)
+    Set RefRange = SLAws2.Range("AH:BY")
+    
+    changeRange.Value = vbalookup(lookupRange, RefRange, 43, ProgressBar_SLA)
+    
+    'comparing status to yesterday's SLA
+    Label5_subProcess = "Copy from non-blank yesterday status"
+    DoEvents
+    
+    If SLAws3.AutoFilterMode Then
+        On Error Resume Next
+        SLAws3.ShowAllData
+        SLAws3.AutoFilterMode = False
+        On Error GoTo 0
+    End If
+    
+    Set LastCell = FindLastCell(SLAws3, True)
+    
+'    SLAws3.Range("3:3").AutoFilter field:=76, Criteria1:="="
+'    SLAws3.Range("3:3").AutoFilter field:=77, Criteria1:="<>"
+'
+'    On Error GoTo NoMatches
+'    Set changeRange = SLAws3.Range("BX4", "BX" & LastCell.Row).SpecialCells(xlCellTypeVisible)
+'    Set copyRange = SLAws3.Range("BY4", "BY" & LastCell.Row).SpecialCells(xlCellTypeVisible)
+'
+'    progress = 0
+'    TotalProgress = Application.CountA(copyRange)
+'
+'    For Each cell In changeRange
+'        If IsEmpty(cell) Then
+'            cell.Value = cell.Offset(0, 1).Value
+'        End If
+'
+'        progress = progress + 1
+'        ProgressBar_SLA.Value = progress / TotalProgress * 100
+'        DoEvents
+'    Next cell
+'
+'NoMatches:
+'    If Err.Number <> 0 Then
+'        noMatchesFromYesterday = True
+'    End If
+        
+'    On Error GoTo 0
+'    SLAws3.ShowAllData
+    
+    
+    'Deleting blanks in BX column
+    Label5_subProcess = "Deleting blank rows from workflow summary"
+    DoEvents
+    
+    Set LastCell = FindLastCell(SLAws3)
+    Set changeRange = SLAws3.Range("BX4", "BX" & LastCell.Row)
+    
+    changeRange.SpecialCells(xlCellTypeBlanks).EntireRow.Delete Shift:=xlUp
+    
+    'handle the last part to paste formulas CR column to CZ column
+    Label5_subProcess = "Updating columns CR-CZ"
+    DoEvents
+    
+    Set changeRange = defineColRangeX(SLAws3, "OH/OO", 8, SLAws3.Range("CR3"))
+    
+    changeRange.FillDown
+    SLAws3.Calculate
+    
+    'vlookup exceptions
+    Label5_subProcess = "Vlookup Exceptions"
+    DoEvents
+    
+    Set LastCell = FindLastCell(SLAws3, True)
+    Set exceptionRange = SLAws3.Range("CY4", "CY" & LastCell.Row)
+    
+    If Not exceptionRange Is Nothing Then
+        exceptionRange.Clear
+        exceptionRange.Value = vbalookup(lookupRange, ExceptionWb.Worksheets(1).Range("E:F"), 2, ProgressBar_SLA)
+    Else
+        Label6_LoadFileWarning = "Error: Exception calculation error! Exception Range is nothing!"
+        Exit Sub
+    End If
+        
+    'filter exceptions to #N/A and resolved, clear content of those in exception column
+    Label5_subProcess = "Determining Exceptions for Column BX: Today's workflow"
+    DoEvents
+    
+    If SLAws3.AutoFilterMode Then
+        On Error Resume Next
+        SLAws3.ShowAllData
+        On Error GoTo 0
+    End If
+    
+    SLAws3.UsedRange.AutoFilter field:=SLAws3.Range("CY:CY").Column, Criteria1:="#N/A", Criteria2:="Resolved", Operator:=xlOr
+    exceptionRange.SpecialCells(xlCellTypeVisible).Clear
+    SLAws3.ShowAllData
+
+    'filter to exception then replace Column BX to today's exception
+    Set copyRange = Nothing
+    Set copyRange = exceptionRange.Find("*")
+    
+    If copyRange Is Nothing Then
+        'did not find exception for today's data
+        Label5_subProcess = "No Exception Data for today"
+        DoEvents
+    Else
+        'counting items
+        Label5_subProcess = "Counting today's workflow items"
+        DoEvents
+        
+        SLAws3.UsedRange.AutoFilter field:=SLAws3.Range("CY:CY").Column, Criteria1:="<>"
+        
+        Dim Allcount, OHCount As Long
+        
+        SLAws3.Range("3:3").AutoFilter field:=SLAws3.Range("BX3").Column, Criteria1:="AWAITING_CATEGORIES", Criteria2:="AWAITING_ITEM_SETUP", Operator:=xlOr
+        Set changeRange = SLAws3.Range("BX5", "BX" & LastCell.Row).SpecialCells(xlCellTypeVisible)
+        
+        Allcount = Application.WorksheetFunction.CountA(changeRange)
+        
+        SLAws3.Range("3:3").AutoFilter field:=SLAws3.Range("CR3").Column, Criteria1:="OH"
+        Set changeRange = SLAws3.Range("CR5", "CR" & LastCell.Row).SpecialCells(xlCellTypeVisible)
+        
+        OHCount = Application.WorksheetFunction.CountA(changeRange)
+        
+        Label8_Item_Count = "Items count for Awaiting_Category and Awaiting_Item_Setup:  Total: " & Allcount & ",  On Hand: " & OHCount
+        
+        'generate a file for toros to read
+        
+        Dim fso As Object
+        Set fso = CreateObject("Scripting.FileSystemObject")
+        Dim oFile As Object
+        Set oFile = fso.CreateTextFile(savedFolder & "\" & Format(Me.Date_Pick.Value, "MM-DD-YYYY") & " Exception Count.txt", True)
+        oFile.WriteLine "Items count for Awaiting_Category and Awaiting_Item_Setup:  Total: " & Allcount & ",  On Hand: " & OHCount
+        If noMatchesFromYesterday Then
+            oFile.WriteLine "\n There was no items with lost workflow status today."
+        End If
+        
+        oFile.Close
+        Set fso = Nothing
+        Set oFile = Nothing
+        
+        SLAws3.ShowAllData
+        
+        SLAws3.UsedRange.AutoFilter field:=SLAws3.Range("CY:CY").Column, Criteria1:="<>"
+        Set copyRange = SLAws3.Range("BX4", "BX" & LastCell.Row)
+        copyRange.SpecialCells(xlCellTypeVisible).Value = "Exception"
+    End If
+    
+    'formulae for true/false statements on workflow status
+    Label5_subProcess = "Updating other columns"
+    DoEvents
+    
+    If SLAws3.AutoFilterMode Then
+        On Error Resume Next
+        SLAws3.ShowAllData
+        On Error GoTo 0
+    End If
+    
+    SLAws3.Columns.EntireColumn.Hidden = False
+    SLAws3.Rows.EntireRow.Hidden = False
+    
+    Set LastCell = FindLastCell(SLAws3)
+    Set changeRange = SLAws3.Range("BZ4", "BZ" & LastCell.Row)
+    changeRange.FillDown
+    
+    Set changeRange = SLAws3.Range("A4", "A" & LastCell.Row)
+    changeRange.FillDown
+    SLAws3.Calculate
+    
+     'replace column AJ and AK blankspace with nothing
+     SLAws3.Range("AJ:AK").Replace What:=" ", replacement:="", LookAt:=xlPart
+    
+    'pasteall values of SLA using hard paste values
+    SLAws3.Range("A4", LastCell).Copy
+    SLAws3.Range("A4").PasteSpecial xlPasteValues
+    
+    
+    'awaiting category sheet update
+    Label5_subProcess = "Updating Awaiting Categories Sheet"
+    DoEvents
+    
+    Set ws = Nothing
+    Set ws = SLAwb.Worksheets("Awaiting Categories")
+    
+    If ws Is Nothing Then
+        Label6_LoadFileWarning = "Error: worksheet ""Awaiting Categories"" is not found!! Please manually update the formulae!"
+    Else
+        'loop through all the possible names for the days to protect against two day gaps
+        For Each key In titleDictionary
+            holderString = CStr(key)
+            ws.UsedRange.Replace What:=holderString, replacement:=SLAws3.Name
+        Next key
+        
+        ws.Calculate
+    End If
+    
+    SLAws3.Range("CS:CX").EntireColumn.Hidden = True
+    SLAws3.Range("A4").EntireRow.Delete Shift:=xlUp
+        
+   'Lock the button
+    CmdBtn_SLAtemplate_Part2.Locked = True
+    CmdBtn_SLAtemplate_Part2.BackColor = rgbGrey
+    
+    UnLink_SLA_Button.Locked = True
+    UnLink_SLA_Button.BackColor = rgbGrey
+    
+    Label4_CurrentProcess = "SLA part II successful"
+    Label5_subProcess = "Awaiting further actions"
+    
+    ExceptionWb.Close savechanges:=False
+    
+    SLA_Userform.Show vbModeless
+End Sub
+
+Private Sub CmdBtn_SLAtemplate_Part3_Click()
+    'the scope of part 3 is to update SLA's OH NOS sheet and dates
+    'assumption for runtime is sLAPart II finished, OH report loaded
+    
+    Application.Calculation = xlCalculationManual
+    
+    Dim template_loc As String
+    Dim Top25Ws As Worksheet
+    
+    On Error Resume Next
+    Set Top25Ws = SLAwb.Worksheets("TOP 25 OH NOS")
+    
+    If Top25Ws Is Nothing Then
+        Label6_LoadFileWarning = "Error: Can not find worksheet: ""TOP 25 OH NOS""!"
+        Exit Sub
+    End If
+    On Error GoTo 0
+    
+    'check for template location for OH worksheet
+    template_loc = GetSetting("BayMacroSetting", "SLA_Generate_Tool", "OH_Template_Default", OHtemplateLocation)
+    
+    If template_loc = "" Then
+        Label6_LoadFileWarning = "Error: Template location for On Hand items not set"
+        Exit Sub
+    End If
+    
+    'check if sla is still present
+    If Link_SLA_Button.Locked = False Or SLAwb Is Nothing Or IsEmpty(SLAwb) Then
+        Label6_LoadFileWarning = "Error: SLA workbook has lost its link!"
+        Exit Sub
+    End If
+    
+    'check if sla part II successfully ran
+    If CmdBtn_SLAtemplate_Part2.Locked = False Then
+        Label6_LoadFileWarning = "Error: Please run SLA part II before continuing."
+        Exit Sub
+    End If
+    
+    Dim LastCell, copyRange As Range
+    Dim ws As Worksheet
+    'pivot referesh variables
+    Dim link As Variant
+    Dim Pivot_table, PT As PivotTable
+    Dim StartPoint As Range
+    Dim DataRange As Range
+    Dim PivotName As String
+    Dim NewRange As String
+    Dim pc_Created As Boolean
+    Dim Pivot_cache As PivotCache
+    
+    'saving OH_workbook
+    Dim temp As String
+    Dim holderName As String
+    Dim tempbook As Workbook
+    
+    Application.DisplayAlerts = False
+    Set OH_wb = Workbooks.Open(template_loc)
+    Application.DisplayAlerts = True
+    
+    
+    Application.ScreenUpdating = False
+    Application.DisplayStatusBar = False
+    ActiveSheet.DisplayPageBreaks = False
+    
+    holderName = OH_wb.Name
+    
+    Set OH_ws = OH_wb.Worksheets("OH data")
+    
+    If SLAws3.AutoFilterMode Then
+    On Error Resume Next
+    SLAws3.ShowAllData
+    On Error GoTo 0
+    End If
+    
+    SLAws3.Columns.EntireColumn.Hidden = False
+    SLAws3.Range("CS:CX").EntireColumn.Hidden = True
+    
+    
+    Label4_CurrentProcess = "Working with OH template file"
+    Label5_subProcess = "Copying Data into template"
+    DoEvents
+    'filter the data down to OH items
+    SLAws3.Range("3:3").AutoFilter field:=96, Criteria1:="OH"
+    
+    'copy into template
+    Set LastCell = FindLastCell(SLAws3)
+    
+    Set copyRange = SLAws3.Range("B4", LastCell).SpecialCells(xlCellTypeVisible)
+        copyRange.Copy OH_ws.Range("A4")
+        SLAws3.ShowAllData
+        
+    If OH_ws.AutoFilterMode Then
+        On Error Resume Next
+        OH_ws.ShowAllData
+        On Error GoTo 0
+    End If
+        
+        Set LastCell = FindLastCell(OH_ws)
+        
+        'drop down the formulae
+        Label5_subProcess = "Working with Formulae, Copying"
+        DoEvents
+        Set copyRange = OH_ws.Range("CT4", "CW" & LastCell.Row)
+        OH_ws.Range("CT2:CW2").Copy copyRange
+        
+        Label5_subProcess = "Working with Formulae, Calculating"
+        DoEvents
+        Application.Calculate
+        If Not Application.CalculationState = xlDone Then
+            DoEvents
+        End If
+        
+        'Update all pivot-table sources then refresh them
+        Set LastCell = FindLastCell(OH_ws)
+        Set StartPoint = OH_ws.Range("A3")
+        
+        pc_Created = False
+        
+        Label5_subProcess = "Refreshing PivotTables"
+        DoEvents
+        
+        Set DataRange = OH_ws.Range(StartPoint, LastCell)
+        NewRange = OH_ws.Name & "!" & DataRange.Address(ReferenceStyle:=xlR1C1)
+        
+        For Each ws In OH_wb.Worksheets
+            If ws.PivotTables.Count > 0 Then
+                For Each Pivot_table In ws.PivotTables
+                    If Not pc_Created Then
+                        Pivot_table.ChangePivotCache OH_wb.PivotCaches.Create(SourceType:=xlDatabase, SourceData:=NewRange)
+                        
+                        Set Pivot_cache = Pivot_table.PivotCache
+                        pc_Created = True
+                        Debug.Print Pivot_table.Name
+                        Debug.Print Pivot_cache.Index
+                    Else
+                        If Pivot_table.CacheIndex <> Pivot_cache.Index Then
+                            Debug.Print Pivot_table.Name
+                            Debug.Print Pivot_cache.Index
+                            
+                            Pivot_table.CacheIndex = Pivot_cache.Index
+                            Set PT = Pivot_table
+                        End If
+                    End If
+                Next Pivot_table
+            End If
+        Next ws
+        
+        PT.RefreshTable
+        
+        'copy the final product to sheet
+        
+        Label5_subProcess = "Copying back into SLA file"
+        DoEvents
+        
+        Set ws = Nothing
+        Set ws = OH_wb.Worksheets("Top 25 PDF")
+        
+        ws.Calculate
+        
+        If ws Is Nothing Then
+            'Sheet not found Critical Error "Top 25 PDF"
+        Else
+            'copy it to same sheet name
+            Set LastCell = FindLastCell(ws)
+            
+            ws.Range("A1", LastCell).Copy Top25Ws.Range("A1") 'to the worksheet of slaws for top 25 PDF
+            
+            'break all links
+            If Not IsEmpty(SLAwb.LinkSources(xlExcelLinks)) Then
+                For Each link In SLAwb.LinkSources(xlExcelLinks)
+                    SLAwb.BreakLink link, xlLinkTypeExcelLinks
+                Next link
+            End If
+        End If
+        
+        Label4_CurrentProcess = "SLA Part III successful"
+        Label5_subProcess = "Done"
+    
+    temp = savedFolder & "\BAY OH SLA " & Format(Me.Date_Pick, "MM.DD.YY") & ".xlsx"
+    
+    On Error Resume Next
+    OH_wb.SaveAs Filename:=temp, FileFormat:=xlWorkbookDefault, ConflictResolution:=XlSaveConflictResolution.xlLocalSessionChanges
+    
+    If Err.Number = 1004 Then
+        Set tempbook = GetWorkbook(temp)
+        tempbook.Close savechanges:=False
+        
+        Set OH_wb = Workbooks(holderName)
+        OH_wb.SaveAs Filename:=temp, FileFormat:=xlWorkbookDefault, ConflictResolution:=XlSaveConflictResolution.xlLocalSessionChanges
+    End If
+        
+    OH_wb.Close savechanges:=True
+    
+    Application.ScreenUpdating = True
+    Application.DisplayStatusBar = True
+    
+    CmdBtn_SLAtemplate_Part3.Locked = True
+    CmdBtn_SLAtemplate_Part3.BackColor = rgbGrey
+End Sub
+
+Private Sub CmdBtn_TemplateLoc_Click()
+    Set fileDialogue = Application.FileDialog(msoFileDialogFilePicker)
+    
+    With fileDialogue
+        .AllowMultiSelect = False
+        .Filters.Clear
+        .Filters.Add "Excel files", "*.xlsx"
+        .Filters.Add "All files", "*.*"
+        .title = "Please select SLA template"
+        
+        'if user selected item
+        If .Show = -1 Then
+            templateLocation = .SelectedItems(1)
+            SaveSetting "BayMacroSetting", "SLA_Generate_Tool", "Template_Default", templateLocation
+            Label2_Template_Location = templateLocation
+        Else
+        'if user cancelled
+            Label5_subProcess = "Canceled setting template location."
+        End If
+    End With
+End Sub
+
+Private Sub Link_SLA_Button_Click()
+    Dim c As control
+    Dim check As Integer
+    
+    For Each c In Me.MultiPage1.Pages("SLA_GenerateReport").Controls
+        If TypeOf c Is MSForms.ComboBox Then
+          'if the type of control is combobox then
+            If c.Value = "" Or c.BackColor = rgbRed Then
+                c.BackColor = rgbRed
+                Link_SLA_Button.ForeColor = rgbRed
+                check = 1
+            End If
+        End If
+    Next c
+ 
+ 'Use check to make sure no comboboxes are missed
+    If check = 0 Then
+        Set SLAws1 = SLAwb.Worksheets("" & SLA_ComboBox1.Value & "")
+        Set SLAws2 = SLAwb.Worksheets("" & SLA_ComboBox2.Value & "")
+        Set SLAws3 = SLAwb.Worksheets("" & SLA_ComboBox3.Value & "")
+    
+        If SLAws1 Is Nothing Or SLAws2 Is Nothing Then
+            Label6_LoadFileWarning = "Error: Link Worksheet Failed!!"
+            Exit Sub
+        Else
+            Link_SLA_Button.ForeColor = Me.ForeColor
+            
+            LoadOldSLA_Button.Locked = True
+            Link_SLA_Button.Locked = True
+            SLA_ComboBox1.Locked = True
+            SLA_ComboBox2.Locked = True
+            SLA_ComboBox3.Locked = True
+            
+            LoadOldSLA_Button.BackColor = rgbGrey
+            Link_SLA_Button.BackColor = rgbGrey
+            SLA_ComboBox1.BackColor = rgbGrey
+            SLA_ComboBox2.BackColor = rgbGrey
+            SLA_ComboBox3.BackColor = rgbGrey
+        End If
+    Else
+        Label6_LoadFileWarning = "Error: linking SLA failed!"
+    End If
+End Sub
+
+Private Sub LoadOldSLA_Button_Click()
+    Dim SLAPath As String
+    Dim titles() As String
+    Dim ws As Worksheet
+    Dim I As Integer
+ 
+ 'build a dictionary for day in the week on sheets
+    Set titleDictionary = CreateObject("scripting.dictionary")
+    titles = Split("Previous Friday,Monday,Tuesday,Wednesday,Thursday,Friday", ",")
+    
+    For I = 0 To UBound(titles)
+        titleDictionary.Add titles(I), ""
+    Next I
+
+    'only allow the user to select one file
+    Set fileDialogue = Application.FileDialog(msoFileDialogOpen)
+        
+    With fileDialogue
+        If Not initialFolder = "" Then
+            .InitialFileName = initialFolder
+        Else
+            .InitialFileName = "C:\"
+        End If
+        .AllowMultiSelect = False
+        .Filters.Add "Excel files", "*.xlsx"
+        .Filters.Add "All files", "*.*"
+    
+        If .Show = -1 Then
+            'get the file path selected by the user
+            SLAPath = .SelectedItems(1)
+            
+            'set workbook, on error exit sub. If user opens "read only" option, operation should continue, but later save as another workbook unprotected
+            SLA_Userform.Show vbModeless
+            On Error Resume Next
+            Label5_subProcess = "Loading old SLA file"
+            DoEvents
+            
+            Set SLAwb = GetWorkbook(SLAPath)
+            
+            Label5_subProcess = "Loaded SLA file: " & SLAwb.Name
+            
+            If Err.Number <> 0 Then
+                Label6_LoadFileWarning = "SLA loading cancelled!"
+                Exit Sub
+            End If
+            
+            On Error GoTo 0
+            Err.Clear
+            
+            
+                       
+            SLA_ComboBox1.Clear
+            SLA_ComboBox2.Clear
+            SLA_ComboBox3.Clear
+            
+    ' load combo box with worksheet names
+            For Each ws In SLAwb.Worksheets
+                For I = 0 To UBound(titles)
+                    If UCase(ws.Name) = UCase(titles(I)) Then
+                        SLA_ComboBox1.AddItem ws.Name
+                        SLA_ComboBox2.AddItem ws.Name
+                        SLA_ComboBox3.AddItem ws.Name
+                    End If
+                Next I
+            Next ws
+            
+            Link_SLA_Button.ForeColor = Me.ForeColor
+            SLA_ComboBox1.BackColor = rgbWhite
+            SLA_ComboBox2.BackColor = rgbWhite
+            SLA_ComboBox3.BackColor = rgbWhite
+        Else
+            Label5_subProcess = "Cancelled loading older SLA file."
+        End If
+    End With
+    
+    SLA_Userform.Show vbModeless
+End Sub
+
+Private Sub ProgressBar_SLA_MouseDown(ByVal Button As Integer, ByVal Shift As Integer, ByVal x As stdole.OLE_XPOS_PIXELS, ByVal y As stdole.OLE_YPOS_PIXELS)
+
+End Sub
+
+'combo box updates, all combo box change events have checks written into them individually, combo2 can't be same as combo1 nor combo3
+Private Sub SLA_ComboBox1_Change()
+    If SLA_ComboBox1.Value = SLA_ComboBox2.Value Then
+        SLA_ComboBox1.BackColor = rgbRed
+        Label6_LoadFileWarning = "Error: Last working day's data can not be moved to the same sheet!"
+    Else
+        SLA_ComboBox1.BackColor = rgbWhite
+        Label6_LoadFileWarning = ""
+    End If
+End Sub
+
+Private Sub SLA_ComboBox2_Change()
+    If SLA_ComboBox2.Value = SLA_ComboBox3.Value Then
+        SLA_ComboBox2.BackColor = rgbRed
+        Label6_LoadFileWarning = "Error: The designation sheet can not contain today's data!"
+    Else
+        SLA_ComboBox2.BackColor = rgbWhite
+        Label6_LoadFileWarning = ""
+    End If
+    
+End Sub
+
+Private Sub SLA_ComboBox3_Change()
+    If SLA_ComboBox3.Value = SLA_ComboBox2.Value Then
+        SLA_ComboBox3.BackColor = rgbRed
+        Label6_LoadFileWarning = "Error: The designation sheet can not contain today's data!"
+    Else
+        SLA_ComboBox3.BackColor = rgbWhite
+        Label6_LoadFileWarning = ""
+    End If
+End Sub
+
+Private Sub Unfreeze_Click()
+    Application.ScreenUpdating = True
+    Application.DisplayStatusBar = True
+    Application.Calculation = xlCalculationAutomatic
+    Application.DisplayAlerts = True
+End Sub
+
+Private Sub UnLink_SLA_Button_Click()
+    Link_SLA_Button.Locked = False
+    SLA_ComboBox1.Locked = False
+    SLA_ComboBox2.Locked = False
+    SLA_ComboBox3.Locked = False
+    
+    LoadOldSLA_Button.BackColor = Me.BackColor
+    Link_SLA_Button.BackColor = Me.BackColor
+    SLA_ComboBox1.BackColor = rgbWhite
+    SLA_ComboBox2.BackColor = rgbWhite
+    SLA_ComboBox3.BackColor = rgbWhite
+End Sub
+
+Private Sub UserForm_Initialize()
+    Label2_Template_Location = GetSetting("BayMacroSetting", "SLA_Generate_Tool", "Template_Default")
+    Label3_Initial_Path = GetSetting("BayMacroSetting", "SLA_Generate_Tool", "Initial_Folder")
+    Label7_OHLocation = GetSetting("BayMacroSetting", "SLA_Generate_Tool", "OH_Template_Default")
+    
+    templateLocation = Me.Label2_Template_Location
+    initialFolder = Me.Label3_Initial_Path
+    OHtemplateLocation = Me.Label7_OHLocation
+    
+    Call AddRuntimeLibrary
+    
+    Me.MultiPage1.Value = 0
+    Me.Date_Pick.Value = Date
+    
+    Set ExceptionWb = Nothing
+    Set SLAwb = Nothing
+    Set startWb = Nothing
+    Set rawDataWb = Nothing
+    Set OH_wb = Nothing
+    
+End Sub
+
+'define a range by looking for a specific text title, and return all the cells to the lastrow of the sheet as a range
+Private Function defineColRangeX(ByVal ws As Worksheet, ByVal targetValue As String, ByVal columnsOffset As Integer, _
+                                Optional ByVal SearchRange As Range = Nothing, Optional ByVal visibleOnly As Boolean = False, _
+                                Optional ByVal RtnHeader As Boolean = False) As Range
+    Dim targetlastRow As Long
+    Dim findTarget As Range
+    Dim returnRange As Range
+    
+    'test if Ws is not empty
+    If ws Is Nothing Then
+        MsgBox ("Worksheet pass failed!"), vbExclamation
+        Exit Function
+    End If
+
+    ws.Activate
+    targetlastRow = ws.Cells.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Row
+
+    'find the range
+    
+    If SearchRange Is Nothing Then
+        Set findTarget = ws.Cells.Find(What:=targetValue, After:=Cells(1, 1), _
+                        LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByRows, _
+                        SearchDirection:=xlNext, MatchCase:=False)
+    Else
+        Set findTarget = SearchRange.Cells.Find(What:=targetValue, After:=SearchRange.Cells(1, 1), _
+                        LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByRows, _
+                        SearchDirection:=xlNext, MatchCase:=False)
+    End If
+
+    If findTarget Is Nothing Then
+        Debug.Print "Did not find columne title: " & targetValue & " on Worksheet: " & ws.Name
+        Exit Function
+    Else
+        Dim tRow, tCol As Long
+        tRow = findTarget.Row
+        tCol = findTarget.Column
+        
+        If visibleOnly = False Then
+            If RtnHeader = True Then
+                Set returnRange = ws.Range(ws.Cells(tRow, tCol), ws.Cells(targetlastRow, tCol + columnsOffset))
+                Set defineColRangeX = returnRange
+            Else
+                Set returnRange = ws.Range(ws.Cells(tRow + 1, tCol), ws.Cells(targetlastRow, tCol + columnsOffset))
+                Set defineColRangeX = returnRange
+            End If
+        Else
+            If RtnHeader = True Then
+                Set returnRange = ws.Range(ws.Cells(tRow, tCol), ws.Cells(targetlastRow, tCol + columnsOffset)).SpecialCells(xlCellTypeVisible)
+                Set defineColRangeX = returnRange
+            Else
+                Set returnRange = ws.Range(ws.Cells(tRow + 1, tCol), ws.Cells(targetlastRow, tCol + columnsOffset)).SpecialCells(xlCellTypeVisible)
+                Set defineColRangeX = returnRange
+            End If
+        End If
+        
+    End If
+
+End Function
+
+'check if workbook is open, if it's not open it
+Function GetWorkbook(ByVal WorkbookFullName As String) As Workbook
+    Dim wb As Workbook
+    For Each wb In Workbooks
+        If wb.FullName = WorkbookFullName Then Exit For
+    Next
+
+    If wb Is Nothing Then
+        If Len(Dir(WorkbookFullName)) > 0 Then
+            On Error Resume Next
+            Set wb = Workbooks.Open(WorkbookFullName)
+            
+            If Err.Number <> 0 Then
+                Debug.Print "Opening workbook: " & WorkbookFullName & " failed!"
+            End If
+            
+            On Error GoTo 0
+            Err.Clear
+        End If
+    End If
+    Set GetWorkbook = wb
+End Function
+
+Public Sub AddRuntimeLibrary()
+  On Error Resume Next
+  Application.VBE.ActiveVBProject.References.AddFromFile "C:\WINDOWS\system32\scrrun.dll"
+  On Error GoTo 0
+End Sub
+
+'I'm retired of finding the last cell every god damn time
+'return a cell range
+
+Function FindLastCell(ByVal onWorksheet As Worksheet, Optional LastDataCell As Boolean = False) As Range
+    Dim LastCell As Range
+    
+    If Application.CountA(onWorksheet.UsedRange) > 0 Then
+        If LastDataCell Then
+            Set LastCell = onWorksheet.Cells.Find(What:="*", _
+                    After:=onWorksheet.Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False)
+            Set FindLastCell = LastCell
+            Set LastCell = Nothing
+        Else
+            Set LastCell = onWorksheet.UsedRange.SpecialCells(xlCellTypeLastCell)
+            Set FindLastCell = LastCell
+            Set LastCell = Nothing
+        End If
+    Else
+        Set FindLastCell = Nothing
+    End If
+End Function
+
+
+'credited to d-stroyer from stackoverflow title post "How to optimize vlookup for high search count ? (alternatives to VLOOKUP)"
+Function vbalookup(ByVal lookupRange As Range, ByVal RefRange As Range, ByVal dataCol As Long, Optional ProgressBar_Name As control) As Variant
+  Dim dict As Object
+  Set dict = CreateObject("Scripting.Dictionary")
+  Dim myRow As Range
+  Dim I As Long, J As Long
+  Dim vResults() As Variant
+  
+  Dim progressTotal As Long
+
+    If IsMissing(ProgressBar_Name) Then
+        ProgressBar_Name = Nothing
+    Else
+        progressTotal = lookupRange.Rows.Count
+        ProgressBar_Name = 0
+    End If
+    
+  ' 1. Build a dictionnary
+  For Each myRow In RefRange.Columns(1).Cells
+    ' Append A : B to dictionnary
+    On Error Resume Next
+    dict.Add myRow.Value, myRow.Offset(0, dataCol - 1).Value
+    On Error GoTo 0
+  Next myRow
+
+  ' 2. Use it over all lookup data
+  ReDim vResults(1 To lookupRange.Rows.Count, 1 To lookupRange.Columns.Count) As Variant
+  For I = 1 To lookupRange.Rows.Count
+    For J = 1 To lookupRange.Columns.Count
+      If dict.Exists(lookupRange.Cells(I, J).Value) Then
+        vResults(I, J) = dict(lookupRange.Cells(I, J).Value)
+      End If
+    Next J
+    
+    'optional progressbar
+        If Not ProgressBar_Name Is Nothing Then
+            ProgressBar_Name = I / progressTotal * 100
+            DoEvents
+        End If
+  Next I
+  vbalookup = vResults
+  dict.RemoveAll
+  Set dict = Nothing
+End Function
+
+
+
