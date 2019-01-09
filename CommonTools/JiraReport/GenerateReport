@@ -1,0 +1,59 @@
+Option Explicit
+Sub genReport()
+
+    FILTER_COLUMN_NAME = "Assignee"
+    TEAM_STATUS_COLUMN_NAME = "Current Jira Team"
+
+    Dim teamList As clsTeamData
+    Dim dataRange, columnRange As Range
+    Dim col, lastRow, jiraDataLastRow, filterColumn, i As Integer
+    Dim dataRangeEachCol, currTeamCol, visibleRange As Range
+    
+    'datarange for finding the teamdata for filtering
+    Set dataRange = TeamDataWs.Columns("B:G")
+    
+    'initiate values for operation
+    JiraDataWs.UsedRange.Cells.EntireRow.Interior.ColorIndex = 0
+    Set currTeamCol = addNewColOrPointTo(JiraDataWs, TEAM_STATUS_COLUMN_NAME, "1:1")
+    filterColumn = Find_DefineCol(JiraDataWs, FILTER_COLUMN_NAME, JiraDataWs.Range("1:1"))
+    jiraDataLastRow = findLastRowNumWithData(JiraDataWs.UsedRange)
+    
+    'loop through all columns to initiate data into teamData object
+    For col = 1 To dataRange.Columns.count
+        Set columnRange = dataRange.Columns(col)
+        Set teamList = New clsTeamData
+        
+        lastRow = findLastRowNumWithData(columnRange)
+
+        If lastRow > 0 Then
+            Set dataRangeEachCol = Range(columnRange.Cells(1, 1), columnRange.Cells(lastRow, 1))
+            teamList.init dataRangeEachCol
+        End If
+        
+        For i = 0 To teamList.count
+            If Not teamList.members(i) = "" Then
+                autoFilterWithValue JiraDataWs, teamList.members(i), filterColumn
+                Debug.Print teamList.members(i)
+                
+                Set visibleRange = JiraDataWs.Range("A1:A" & jiraDataLastRow).SpecialCells(xlCellTypeVisible)
+                If visibleRange.Cells.count > 1 Then
+                    currTeamCol.SpecialCells(xlCellTypeVisible).Value = teamList.teamName
+                End If
+            End If
+        Next i
+        
+        Set teamList = Nothing
+    Next col
+    
+    'filter TEAM_STATUS_COLUMN_NAME to blank and color them red
+    autoFilterWithValue JiraDataWs, "=", currTeamCol.Column
+    Set visibleRange = JiraDataWs.Range("A1:A" & jiraDataLastRow).SpecialCells(xlCellTypeVisible)
+    If visibleRange.Cells.count > 1 Then
+        visibleRange.Cells.EntireRow.Interior.ColorIndex = 6
+    End If
+    
+    If JiraDataWs.AutoFilterMode Then
+        JiraDataWs.AutoFilterMode = False
+    End If
+    
+End Sub
