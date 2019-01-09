@@ -1,0 +1,174 @@
+Option Explicit
+
+'light weight version of pim converter
+Sub ConvertToPIM()
+    
+    Dim ws, PIMWs As Worksheet
+    Dim RangeToConvert, cell As Range
+    Dim ConvertArray() As Variant
+    Dim i, j, PIM_limit, trackNum, rowTrack As Long
+ 
+ 'setting the inputs
+    trackNum = 0
+    rowTrack = 1
+
+    On Error GoTo ErrorHandle0
+        Set ws = PasteSheet
+    On Error GoTo 0
+
+    Set RangeToConvert = ws.Range("A:Z")
+
+ 'loading user settings
+    If RegKeyExists(regSvsKey) Then
+        PIM_limit = CLng(RegKeyRead(regSvsKey))
+    Else
+        PIM_limit = 800
+    End If
+    
+ 'Program starts
+    Dim searchString As String
+    
+    If Application.WorksheetFunction.CountA(RangeToConvert) > 1 Then
+        'read data into memory
+        ConvertArray = FindDataRange(RangeToConvert).Value
+    
+        'add sheets
+        If SheetExists("PIM Keys") Then
+            Set PIMWs = ThisWorkbook.Worksheets("PIM Keys")
+        Else
+            Set PIMWs = Worksheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Worksheets.Count))
+            PIMWs.Name = "PIM Keys"
+            PIMWs.UsedRange.Clear
+        End If
+        
+        'trying concatenate them into PIM format, 13 digits with leading zeros, separated by ";" semicolon
+        'PIM has a limit of 800 search string restriction
+        
+        For i = LBound(ConvertArray, 1) To UBound(ConvertArray, 1)
+            For j = LBound(ConvertArray, 2) To UBound(ConvertArray, 2)
+                
+                If Not ConvertArray(i, j) = "" Then
+                    
+                    ConvertArray(i, j) = Replace(ConvertArray(i, j), ";", "")
+                
+                    
+                    If Not ForceDigits(ConvertArray(i, j), 13) = "" Then
+                        searchString = searchString & ForceDigits(ConvertArray(i, j), 13)
+                        
+                        trackNum = trackNum + 1
+
+                        'every 800 reset searchstring and write result to sheet
+                        If trackNum Mod PIM_limit = 0 Then
+                            
+                            'write to sheet
+                            PIMWs.Range("A" & rowTrack).Value = "PIM Keys " & rowTrack & ":"
+                            PIMWs.Range("B" & rowTrack).Value = searchString
+                            PIMWs.Range("G" & rowTrack).Value = PIM_limit
+                                                
+                            rowTrack = rowTrack + 1
+                            searchString = ""
+                        ElseIf Not (i = UBound(ConvertArray, 1) And j = UBound(ConvertArray, 2)) Then
+                            searchString = searchString & ";"
+                        End If
+                        
+                    End If
+                End If
+                
+            Next j
+        Next i
+        
+        
+        'ws.Range("K1").Resize(UBound(ConvertArray, 1), UBound(ConvertArray, 2)).Value = ConvertArray
+        PIMWs.Range("A" & rowTrack).Value = "PIM Keys " & rowTrack & ":"
+        PIMWs.Range("B" & rowTrack).Value = searchString
+        PIMWs.Range("G" & rowTrack).Value = trackNum Mod PIM_limit
+        
+        PIMWs.Range("F" & rowTrack + 1).Value = "Total:"
+        PIMWs.Range("G" & rowTrack + 1).Value = Application.WorksheetFunction.Sum(PIMWs.Range("G1", "G" & rowTrack))
+        
+        PIMWs.Activate
+    Else
+        MsgBox ("Requires two or more cells to have Data from Column A to Z!")
+    End If
+    
+    
+    Exit Sub
+ErrorHandle0:
+    MsgBox ("Can not find worksheet")
+    Exit Sub
+
+
+End Sub
+
+'Check to see if sheet exists
+Function SheetExists(sheetToFind As String) As Boolean
+    Dim ws As Worksheet
+    SheetExists = False
+    For Each ws In Worksheets
+        If sheetToFind = ws.Name Then
+            SheetExists = True
+            Exit Function
+        End If
+    Next ws
+End Function
+
+'returns a range that is rectangle all the data on a specfic range thats none blank
+Function FindDataRange(ByVal searchInRange As Range) As Range
+
+    Dim lRow, fRow As Long
+    Dim lCol, fCol As Long
+    
+    fRow = searchInRange.Find(What:="*", _
+                    After:=searchInRange.Cells(searchInRange.Cells.Count), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, _
+                    SearchDirection:=xlNext, _
+                    MatchCase:=False).Row
+    
+    fCol = searchInRange.Find(What:="*", _
+                    After:=searchInRange(1, 1), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByColumns, _
+                    SearchDirection:=xlNext, _
+                    MatchCase:=False).Column
+    
+    lRow = searchInRange.Find(What:="*", _
+                    After:=searchInRange(1, 1), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Row
+                    
+    lCol = searchInRange.Find(What:="*", _
+                    After:=searchInRange(1, 1), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByColumns, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Column
+
+    Set FindDataRange = Range(Cells(fRow, fCol), Cells(lRow, lCol))
+End Function
+
+'force number format to user defined number of digits
+Function ForceDigits(ByVal someNumber, Optional ByVal digits As Integer = 0) As String
+    Dim formatString As String
+    Dim i As Integer
+    
+    If Not digits = 0 Then
+        For i = 1 To digits
+            formatString = formatString & "0"
+        Next i
+    End If
+    
+    If IsNumeric(someNumber) Then
+        ForceDigits = Format(someNumber, formatString)
+    Else
+        ForceDigits = ""
+    End If
+End Function
+
+
