@@ -1,0 +1,534 @@
+Public DailyReportWb, SLAwb As Workbook
+Public SLAws1, SLAws2 As Worksheet
+
+Const SLAfolder As String = "Ommitted"
+'Bay Daily report, this macro is looping through all ranges to get the count/sum
+'it is super retarded way of doing it, but I am too lazy to make it better
+
+
+Private Sub Btn_Day1Sheet_Click()
+    Dim I As Integer
+
+    If ComboBox1.Value = "" Then
+        ComboBox1.BackColor = rgbRed
+        Btn_LoadSLA.ForeColor = rgbRed
+        Exit Sub
+    Else
+        Set SLAws1 = SLAwb.Worksheets("" & ComboBox1.Value & "")
+        
+        'assign sheet to the worksheet variables
+        If SLAws1 Is Nothing Then
+            MsgBox ("This shouldn't appear, if it did, then it is really bad, error sheet: SLAws1"), vbCritical
+            Exit Sub
+        Else
+            MsgBox ("Linked to Worksheet: " & SLAws1.Name), vbInformation
+            Btn_LoadSLA.ForeColor = Me.ForeColor
+            ComboBox1.Locked = True
+            Btn_LoadSLA.Locked = True
+            Btn_Day1Sheet.Locked = True
+            
+            'remove the list from combobox 2
+            For I = 0 To ComboBox1.ListCount - 1
+                If ComboBox1.Value = ComboBox1.List(I) Then
+                    ComboBox2.RemoveItem I
+                End If
+            Next I
+                
+        End If
+    End If
+End Sub
+
+Private Sub Btn_Day2Sheet_Click()
+    Dim I As Integer
+
+    If ComboBox2.Value = "" Then
+        ComboBox2.BackColor = rgbRed
+        Btn_LoadSLA.ForeColor = rgbRed
+        Exit Sub
+    Else
+        Set SLAws2 = SLAwb.Worksheets("" & ComboBox2.Value & "")
+        
+        'assign sheet to the worksheet variables
+        If SLAws2 Is Nothing Then
+            MsgBox ("This shouldn't appear, if it did, then it is really bad, error sheet: SLAws2"), vbCritical
+            Exit Sub
+        Else
+            MsgBox ("Linked to Worksheet: " & SLAws2.Name), vbInformation
+            Btn_LoadSLA.ForeColor = Me.ForeColor
+            ComboBox2.Locked = True
+            Btn_LoadSLA.Locked = True
+            Btn_Day2Sheet.Locked = True
+            
+            'remove the list from combobox 2
+            For I = 0 To ComboBox2.ListCount - 1
+                If ComboBox2.Value = ComboBox2.List(I) Then
+                    ComboBox1.RemoveItem I
+                End If
+            Next I
+                
+        End If
+    End If
+End Sub
+
+Private Sub ComboBox1_AfterUpdate()
+    ComboBox1.BackColor = &H80000005
+    Btn_LoadSLA.ForeColor = Me.ForeColor
+End Sub
+
+Private Sub ComboBox2_AfterUpdate()
+    ComboBox2.BackColor = &H80000005
+    Btn_LoadSLA.ForeColor = Me.ForeColor
+End Sub
+
+
+Private Sub Btn_LoadSLA_Click()
+    Dim intChoice As Integer
+    Dim SLAPath As String
+    Dim ws As Worksheet
+
+    'only allow the user to select one file
+    Application.FileDialog(msoFileDialogOpen).AllowMultiSelect = False
+    'make the file dialog visible to the user
+    Application.FileDialog(msoFileDialogOpen).InitialFileName = SLAfolder & "\"
+    
+    intChoice = Application.FileDialog(msoFileDialogOpen).Show
+    
+    If intChoice <> 0 Then
+        'get the file path selected by the user
+        SLAPath = Application.FileDialog(msoFileDialogOpen).SelectedItems(1)
+        'print the file path to Label
+        Lbl_SLAPath = SLAPath
+        
+        Set SLAwb = getWorkbook(SLAPath)
+        
+        If SLAwb Is Nothing Then
+            MsgBox "File not found:" & vbCrLf & SLAPath, vbCritical, "Loading Cancelled"
+            Exit Sub
+        End If
+        
+    'load combo box with worksheet names
+           
+        For Each ws In SLAwb.Worksheets
+            ComboBox1.AddItem ws.Name
+            ComboBox2.AddItem ws.Name
+        Next
+          
+    End If
+    
+End Sub
+
+Private Sub CalculateReport_Click()
+    Dim ws As Worksheet
+    Dim findValue As Range
+    Dim lastRow, lastCol As Long
+    'turn off autofilter mode
+    For Each ws In SLAwb.Worksheets
+        If ws.AutoFilterMode Then
+            ws.AutoFilterMode = False
+        End If
+    Next ws
+    
+    Application.Calculation = xlManual
+    'insert the status columns from current day into previous day, to match their statuses
+    Set findValue = SLAws1.Cells.Find(What:="Pulled Status From Today Worksheet", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False)
+    
+    If findValue Is Nothing Then
+        Call CompareTwoSLA
+    Else
+        ProBar_MatchIndex = 100
+    End If
+    
+    lastRow = SLAws1.Cells.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Row
+    
+    lastCol = SLAws1.Cells.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Column
+    
+    'this is the start of code that fills out spots according to previous day sheet
+    'then start filtering for the correct values
+    Dim col_status, col_added, col_OH, col_Inv As Long
+    Dim loopRange, cell, DataRange As Range
+    Dim trackProgress, totalProgress As Long
+    Dim cri1() As String
+    Dim cri2() As String
+    Dim cri3() As String
+    Dim cri4() As String
+    
+    SLAws1.Activate
+    Set DataRange = SLAws1.Range(Cells(3, 1), Cells(lastRow, lastCol))
+
+    'find out the columns on slaws1 for these following title
+    col_status = Find_DefineCol(SLAws1, "Today's Status", SLAws1.Range("A3", SLAws1.Cells(3, SLAws1.UsedRange.Columns.Count)))
+    col_added = Find_DefineCol(SLAws1, "Pulled Status From Today Worksheet", SLAws1.Range("A3", SLAws1.Cells(3, SLAws1.UsedRange.Columns.Count)))
+    col_OH = Find_DefineCol(SLAws1, "OH/OO", SLAws1.Range("A3", SLAws1.Cells(3, SLAws1.UsedRange.Columns.Count)))
+
+    totalProgress = 11
+    
+    'here starts the actual logic to count data we want, by declaring all the variables
+    Dim newInSLA_IT, newInSLA_IT_OH, newInSLA_CY, newInSLA_CY_OH As Long
+    
+    cri1 = Split("SENT_TO_STUDIO, SAMPLE_SENT_TO_STUDIO, IMAGE_PROCESSING, COPY_PROCESSING, COPY_PROCESSING_SAMPLE", ",")
+    cri2 = Split("AWAITING_ITEM_SETUP, AWAITING_INVENTORY, AWAITING_CATEGORIES, #N/A", ",")
+    cri3 = Split("SENT_TO_STUDIO, SAMPLE_SENT_TO_STUDIO, IMAGE_PROCESSING", ",")
+    cri4 = Split("AWAITING_ITEM_SETUP, AWAITING_INVENTORY, AWAITING_CATEGORIES, #N/A, COPY_PROCESSING, COPY_PROCESSING_SAMPLE", ",")
+    
+ 'this is the slaws1 filter section
+    DataRange.AutoFilter Field:=col_status, Criteria1:=cri1, Operator:=xlFilterValues
+    DataRange.AutoFilter Field:=col_added, Criteria1:=cri2, Operator:=xlFilterValues
+    
+    With SLAws1
+        Set loopRange = .Range(.Cells(4, col_status), .Cells(lastRow, col_status))
+    End With
+    
+    newInSLA_IT = Application.WorksheetFunction.Subtotal(3, loopRange)
+    
+    DataRange.AutoFilter Field:=col_OH, Criteria1:="OH", Operator:=xlFilterValues
+    newInSLA_IT_OH = Application.WorksheetFunction.Subtotal(3, loopRange)
+    
+    SLAws1.AutoFilterMode = False
+    
+    DataRange.AutoFilter Field:=col_status, Criteria1:=cri3, Operator:=xlFilterValues
+    DataRange.AutoFilter Field:=col_added, Criteria1:=cri4, Operator:=xlFilterValues
+    
+    newInSLA_CY = Application.WorksheetFunction.Subtotal(3, loopRange)
+    
+    DataRange.AutoFilter Field:=col_OH, Criteria1:="OH", Operator:=xlFilterValues
+    newInSLA_CY_OH = Application.WorksheetFunction.Subtotal(3, loopRange)
+    
+    SLAws1.AutoFilterMode = False
+    
+    'write result after previous day page is done
+    Dim dailyWs As Worksheet
+    Dim dailyWS_Lastrow As Long
+    
+    Set dailyWs = DailyReportWb.Worksheets(1)
+    dailyWs.Activate
+
+    dailyWS_Lastrow = dailyWs.Cells.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Row
+
+    dailyWs.Cells(dailyWS_Lastrow + 1, 16) = newInSLA_IT
+    dailyWs.Cells(dailyWS_Lastrow + 1, 17) = newInSLA_IT_OH
+    dailyWs.Cells(dailyWS_Lastrow + 1, 18) = newInSLA_CY
+    dailyWs.Cells(dailyWS_Lastrow + 1, 19) = newInSLA_CY_OH
+    dailyWs.Cells(dailyWS_Lastrow + 1, 1) = Format(Now(), "DD-MMM")
+    
+    'update the progress bar
+    trackProgress = 4
+    ProBar_Counting = trackProgress / totalProgress * 100
+
+ 'here starts the 2nd sheet's filter process
+    ReDim cri1(1) As String
+    ReDim cri2(1) As String
+    ReDim cri3(2) As String
+    
+    cri1(0) = "AWAITING_ITEM_SETUP"
+    cri2(0) = "AWAITING_CATEGORIES"
+    cri3 = Split("COPY_PROCESSING, COPY_PROCESSING_SAMPLE", ",")
+
+    Dim Await_IT_OH, Amount1, Await_CG_OH, Amount2, Await_IT_Trans, Amount3, Copy_OH, Amount4, Copy_IT As Long
+
+    'find out the columns on slaws2 for these following title
+    SLAws2.Activate
+    col_status = Find_DefineCol(SLAws2, "Today's Status", SLAws2.Range("A3", SLAws2.Cells(3, SLAws2.UsedRange.Columns.Count)))
+    col_added = Find_DefineCol(SLAws2, "IT Units", SLAws2.Range("A3", SLAws2.Cells(3, SLAws2.UsedRange.Columns.Count)))
+    col_OH = Find_DefineCol(SLAws2, "OH/OO", SLAws2.Range("A3", SLAws2.Cells(3, SLAws2.UsedRange.Columns.Count)))
+    col_Inv = Find_DefineCol(SLAws2, "Ecom Curr Inv $ (Col", SLAws2.Range("A3", SLAws2.Cells(3, SLAws2.UsedRange.Columns.Count)))
+    
+    'filter range for slaws2
+    SLAws2.Activate
+    
+    lastRow = SLAws2.Cells.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Row
+    
+    lastCol = SLAws2.Cells.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Column
+
+    
+    Set DataRange = SLAws2.Range(Cells(3, 1), Cells(lastRow, lastCol))
+    
+    'OH Awaiting Item Setup
+    DataRange.AutoFilter Field:=col_status, Criteria1:=cri1, Operator:=xlFilterValues
+    DataRange.AutoFilter Field:=col_OH, Criteria1:="OH", Operator:=xlFilterValues
+    
+    With SLAws2
+        Set loopRange = .Range(.Cells(4, col_Inv), .Cells(lastRow, col_Inv))
+    End With
+    Await_IT_OH = Application.WorksheetFunction.Subtotal(3, loopRange)
+    Amount1 = Application.WorksheetFunction.Subtotal(9, loopRange)
+    
+    'update the progress bar
+    trackProgress = 5
+    ProBar_Counting = trackProgress / totalProgress * 100
+    
+    'IT Awaiting Item Setup
+    DataRange.AutoFilter Field:=col_added, Criteria1:=">0", Operator:=xlFilterValues
+    
+    Await_IT_Trans = Application.WorksheetFunction.Subtotal(3, loopRange)
+    Amount3 = Application.WorksheetFunction.Subtotal(9, loopRange)
+    
+    'update the progress bar
+    trackProgress = 6
+    ProBar_Counting = trackProgress / totalProgress * 100
+    
+    SLAws2.ShowAllData
+    
+    'OH Awaiting Categorization
+    DataRange.AutoFilter Field:=col_status, Criteria1:=cri2, Operator:=xlFilterValues
+    DataRange.AutoFilter Field:=col_OH, Criteria1:="OH", Operator:=xlFilterValues
+
+    Await_CG_OH = Application.WorksheetFunction.Subtotal(3, loopRange)
+    Amount2 = Application.WorksheetFunction.Subtotal(9, loopRange)
+    
+    'update the progress bar
+    trackProgress = 7
+    ProBar_Counting = trackProgress / totalProgress * 100
+
+    SLAws2.ShowAllData
+    
+    'OH Copy
+    DataRange.AutoFilter Field:=col_status, Criteria1:=cri3, Operator:=xlFilterValues
+    DataRange.AutoFilter Field:=col_OH, Criteria1:="OH", Operator:=xlFilterValues
+        
+    Copy_OH = Application.WorksheetFunction.Subtotal(3, loopRange)
+    Amount4 = Application.WorksheetFunction.Subtotal(9, loopRange)
+    
+    SLAws2.ShowAllData
+    
+    DataRange.AutoFilter Field:=col_status, Criteria1:=cri3, Operator:=xlFilterValues
+    DataRange.AutoFilter Field:=col_added, Criteria1:=">0", Operator:=xlFilterValues
+    
+    Copy_IT = Application.WorksheetFunction.Subtotal(3, loopRange)
+    
+    SLAws2.AutoFilterMode = False
+    
+    'update the progress bar
+    trackProgress = 10
+    ProBar_Counting = trackProgress / totalProgress * 100
+
+    'its ugly but hey, you don't have to think this way
+    dailyWs.Cells(dailyWS_Lastrow + 1, 2) = Await_IT_OH
+    dailyWs.Cells(dailyWS_Lastrow + 1, 3) = Amount1
+    dailyWs.Cells(dailyWS_Lastrow + 1, 4) = Await_CG_OH
+    dailyWs.Cells(dailyWS_Lastrow + 1, 5) = Amount2
+    dailyWs.Cells(dailyWS_Lastrow + 1, 6) = Await_IT_Trans
+    dailyWs.Cells(dailyWS_Lastrow + 1, 7) = Amount3
+    dailyWs.Cells(dailyWS_Lastrow + 1, 10) = Copy_OH
+    dailyWs.Cells(dailyWS_Lastrow + 1, 11) = Amount4
+    dailyWs.Cells(dailyWS_Lastrow + 1, 14) = Copy_IT
+    
+    'update the progress bar
+    trackProgress = 11
+    ProBar_Counting = trackProgress / totalProgress * 100
+    
+    FormBayDailyReport.Hide
+End Sub
+
+'compare the SKN numbers between two sheet
+Private Sub CompareTwoSLA()
+    Dim SKNRange, MatchRange, IndexRange, WriteRange As Range
+    Dim cell As Range
+    SLAws1.Activate
+    Set SKNRange = defineColRangeX(SLAws1, "SKN", 0, SLAws1.Range("A3", Cells(3, SLAws1.UsedRange.Columns.Count)))
+    
+    SKNRange.Offset(0, 1).EntireColumn.Insert shift:=xlToRight
+    SKNRange.Offset(0, 1).Cells.Interior.Color = rgbLightBlue
+    SLAws1.Cells(3, SKNRange.Offset(0, 1).Column) = "Pulled Status From Today Worksheet"
+    Set WriteRange = SKNRange.Offset(0, 1)
+
+    SLAws2.Activate
+    Set MatchRange = defineColRangeX(SLAws2, "SKN", 45, SLAws2.Range("A3", Cells(3, SLAws2.UsedRange.Columns.Count)))
+    Set IndexRange = defineColRangeX(SLAws2, "Workflow Summary Status", 0, SLAws2.Range("A3", Cells(3, SLAws2.UsedRange.Columns.Count)))
+
+    WriteRange.Value = vbalookup(SKNRange, MatchRange, IndexRange.Column - MatchRange(1, 1).Column + 1, Me.ProBar_MatchIndex)
+    
+End Sub
+
+'check if workbook is open, if it's not open it
+Function getWorkbook(WorkbookFullName As String) As Workbook
+    Dim wb As Workbook
+    For Each wb In Workbooks
+        If wb.FullName = WorkbookFullName Then Exit For
+    Next
+
+    If wb Is Nothing Then
+        If Len(Dir(WorkbookFullName)) > 0 Then
+            On Error GoTo skipstep
+            Set wb = Workbooks.Open(WorkbookFullName, ReadOnly:=True)
+        End If
+    End If
+    Set getWorkbook = wb
+    
+skipstep:
+    On Error GoTo 0
+End Function
+
+Private Sub UserForm_Initialize()
+    Set DailyReportWb = Application.ActiveWorkbook
+End Sub
+
+'define a range by looking for a specific text title, and return all the cells to the lastrow of the sheet as a range
+Private Function defineColRangeX(ByVal ws As Worksheet, ByVal targetValue As String, ByVal columnsOffset As Integer, _
+                                Optional ByVal SearchRange As Range = Nothing, Optional ByVal visibleOnly As Boolean = False, _
+                                Optional ByVal RtnHeader As Boolean = False) As Range
+    Dim targetlastRow As Long
+    Dim findTarget As Range
+    Dim returnRange As Range
+    
+    'test if Ws is not empty
+    If ws Is Nothing Then
+        MsgBox ("Worksheet pass failed!"), vbExclamation
+        Exit Function
+    End If
+
+    ws.Activate
+    targetlastRow = ws.Cells.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Row
+
+    'find the range
+    
+    If SearchRange Is Nothing Then
+        Set findTarget = ws.Cells.Find(What:=targetValue, After:=Cells(1, 1), _
+                        LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByRows, _
+                        SearchDirection:=xlNext, MatchCase:=False)
+    Else
+        Set findTarget = SearchRange.Cells.Find(What:=targetValue, After:=SearchRange.Cells(1, 1), _
+                        LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByRows, _
+                        SearchDirection:=xlNext, MatchCase:=False)
+    End If
+
+    If findTarget Is Nothing Then
+        Debug.Print ("Did not find columne title """ & targetValue & ""), vbExclamation
+        Exit Function
+    Else
+        Dim tRow, tCol As Long
+        tRow = findTarget.Row
+        tCol = findTarget.Column
+        
+        On Error Resume Next
+        
+        With ws
+            If visibleOnly = False Then
+                If RtnHeader = True Then
+                    Set returnRange = .Range(.Cells(tRow, tCol), .Cells(targetlastRow, tCol + columnsOffset))
+                    Set defineColRangeX = returnRange
+                Else
+                    Set returnRange = .Range(.Cells(tRow + 1, tCol), .Cells(targetlastRow, tCol + columnsOffset))
+                    Set defineColRangeX = returnRange
+                End If
+            Else
+                If RtnHeader = True Then
+                    Set returnRange = .Range(.Cells(tRow, tCol), .Cells(targetlastRow, tCol + columnsOffset)).SpecialCells(xlCellTypeVisible)
+                    Set defineColRangeX = returnRange
+                Else
+                    Set returnRange = ws.Range(.Cells(tRow + 1, tCol), .Cells(targetlastRow, tCol + columnsOffset)).SpecialCells(xlCellTypeVisible)
+                    Set defineColRangeX = returnRange
+                End If
+            End If
+            
+            If Err <> 0 Then
+                Debug.Print "Worksheet: " & ws.Name & " Column Name: " & targetValue
+            End If
+            On Error GoTo 0
+            Err.Clear
+        End With
+    End If
+
+End Function
+
+'Define a range from cell found by .find method to the lastrow and user defined column offset
+Function Find_DefineCol(ByVal onWorksheet As Worksheet, ByVal cellContent As String, _
+                            Optional ByVal SearchRange As Range = Nothing) As Integer
+    Dim foundCell As Range
+
+    If SearchRange Is Nothing Then
+        Set foundCell = onWorksheet.Cells.Find(What:=cellContent, LookAt:=xlPart, LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, SearchDirection:=xlNext, MatchCase:=False)
+    Else
+        Set foundCell = SearchRange.Find(What:=cellContent, LookAt:=xlPart, LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, SearchDirection:=xlNext, MatchCase:=False)
+    End If
+    
+    Find_DefineCol = foundCell.Column
+End Function
+
+'credited to d-stroyer from stackoverflow title post "How to optimize vlookup for high search count ? (alternatives to VLOOKUP)"
+Function vbalookup(ByVal lookupRange As Range, ByVal refRange As Range, ByVal dataCol As Long, Optional ProgressBar_Name As Control) As Variant
+  Dim dict As Object
+  Set dict = CreateObject("Scripting.Dictionary")
+  Dim myRow As Range
+  Dim I As Long, J As Long
+  Dim vResults() As Variant
+  
+  Dim progressTotal As Long
+
+    If IsMissing(ProgressBar_Name) Then
+        ProgressBar_Name = Nothing
+    Else
+        progressTotal = lookupRange.Rows.Count
+        ProgressBar_Name = 0
+    End If
+    
+  ' 1. Build a dictionnary
+  For Each myRow In refRange.Columns(1).Cells
+    ' Append A : B to dictionnary
+    On Error Resume Next
+    dict.Add myRow.Value, myRow.Offset(0, dataCol - 1).Value
+    On Error GoTo 0
+  Next myRow
+
+  ' 2. Use it over all lookup data
+  ReDim vResults(1 To lookupRange.Rows.Count, 1 To lookupRange.Columns.Count) As Variant
+  For I = 1 To lookupRange.Rows.Count
+    For J = 1 To lookupRange.Columns.Count
+      If dict.Exists(lookupRange.Cells(I, J).Value) Then
+        vResults(I, J) = dict(lookupRange.Cells(I, J).Value)
+      End If
+    Next J
+    
+    'optional progressbar
+        If Not ProgressBar_Name Is Nothing Then
+            ProgressBar_Name = I / progressTotal * 100
+            DoEvents
+        End If
+  Next I
+  
+  
+  vbalookup = vResults
+End Function
