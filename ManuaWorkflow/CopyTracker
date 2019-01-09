@@ -1,0 +1,517 @@
+
+Const status3P As String = "Sent to TaskUs"
+Const Filepath As String = "\\scb-lx-adv01\Fullpress\STUDIO_NEW\03_COPY\L&T"
+
+
+Sub LT_Part1_Data_Prep()
+
+'this macro will pull data from assigned file to a template file
+'it will copy into "workflow" sheet and 3P pull "worksheet"
+'then generate SVS keys for PIM data pull
+
+
+Dim scrWb As Workbook
+Dim tgtwb As Workbook
+Dim ws1 As Worksheet
+Dim copyRange As Range
+Dim lastRow As Integer
+
+
+'set sheet page for current one
+Set tgtwb = Application.ActiveWorkbook
+On Error Resume Next
+Set ws1 = tgtwb.Worksheets("Workflow")
+
+If Err <> 0 Then
+    MsgBox ("Worksheet Workflow not found! Exiting!")
+    Exit Sub
+End If
+
+'unhide all columns on tgtwb
+
+lastRow = ws1.Range("A" & ws1.Rows.count).End(xlUp).Row
+
+'edit title to warp text
+ws1.Range("a1").EntireRow.WrapText = True
+
+
+
+
+'Generating PIM search keys for PIM data retrieval
+Dim i As Integer, rowtrack As Integer
+Dim searchkey As Variant
+Dim OutputRow As Integer
+Dim SVSws As Worksheet
+
+OutputRow = 1
+rowtrack = 2
+searchkey = ""
+
+If SheetExists("PIM Keys") Then
+    Set SVSws = ActiveWorkbook.Worksheets("PIM Keys")
+Else
+    Set SVSws = Worksheets.Add(After:=ActiveWorkbook.Sheets(1))
+    SVSws.Name = "PIM Keys"
+End If
+
+    Do While rowtrack < lastRow   'loop to the last line of data
+    
+        For i = 1 To 600 'maximum lines of limit of PIM system, was 800
+            If Not IsEmpty(ws1.Range("N" & rowtrack)) Then
+                'add value to collection after formatting them
+                searchkey = searchkey & ";" & Format(ws1.Range("N" & rowtrack).Value, "0000000000000")
+            End If
+            
+            If i = 600 Then
+                SVSws.Range("A" & OutputRow) = "Search Key " & OutputRow & ":"
+                searchkey = Right(searchkey, Len(searchkey) - 1) 'delete the first ":" from string
+                SVSws.Range("B" & OutputRow) = searchkey
+                OutputRow = OutputRow + 1
+                searchkey = ""
+            ElseIf rowtrack = lastRow Then  '+1 is for when isEmpty does not get executed at last row scenerio
+                SVSws.Range("A" & OutputRow) = "Search Key " & OutputRow & ":"
+                searchkey = Right(searchkey, Len(searchkey) - 1) 'delete the first ":" from string
+                SVSws.Range("B" & OutputRow) = searchkey
+                Exit For
+            End If
+            
+            rowtrack = rowtrack + 1
+        Next i
+        
+        
+    Loop
+
+''open workbook report preparing to send to 3rd party
+'Dim intChoice As Integer
+'Dim fNameAndPath As String
+'
+'    'only allow the user to select one file
+'    Application.FileDialog(msoFileDialogOpen).AllowMultiSelect = False
+'    Application.FileDialog(msoFileDialogOpen).InitialFileName = Filepath & "\"
+'    Application.FileDialog(msoFileDialogOpen).Filters.Add "Excel Files", "*.xlsx", 1
+'    'make the file dialog visible to the user
+'    intChoice = Application.FileDialog(msoFileDialogOpen).Show
+'    'determine what choice the user made
+'    If intChoice <> 0 Then
+'        'get the file path selected by the user
+'        fNameAndPath = Application.FileDialog(msoFileDialogOpen).SelectedItems(1)
+'    Else
+'        Exit Sub
+'    End If
+'
+'Set scrWb = Workbooks.Open(fNameAndPath, ReadOnly:=True, UpdateLinks:=False)
+'
+'Dim ws2 As Worksheet
+'Dim thirdPartySheet As Worksheet
+'
+'tgtwb.Activate
+'Set ws2 = tgtwb.Worksheets("3P Pull")
+'
+'For Each thirdPartySheet In scrWb.Worksheets
+'
+'    'loop through the sheets
+'    Set copyRange = defineColRange(thirdPartySheet, "Product No.", False, True)
+'
+'    If Not copyRange Is Nothing Then
+'        copyRange.Copy
+'        'paste into the sheet 3p sheet
+'        lastRow = ws2.Range("A" & ws1.Rows.count).End(xlUp).Row
+'
+'        If lastRow = 1 Then
+'            ws2.Range("A1").PasteSpecial xlPasteAll
+'            Else
+'            ws2.Range("A" & ws2.Rows.count).End(xlUp).Offset(1, 0).PasteSpecial xlPasteAll
+'        End If
+'    End If
+'Next thirdPartySheet
+'
+'scrWb.Close savechanges:=False
+'
+''3p pull populate column B with text
+'
+'
+'lastRow = ws2.Range("A" & ws1.Rows.count).End(xlUp).Row
+'ws2.Range("B1", "B" & lastRow).Value = status3P
+
+
+End Sub
+
+Function SheetExists(sheetToFind As String) As Boolean
+    Dim ws As Worksheet
+    SheetExists = False
+    For Each ws In Worksheets
+        If sheetToFind = ws.Name Then
+            SheetExists = True
+            Exit Function
+        End If
+    Next ws
+End Function
+
+'define a range by looking for a specific text title, and return all the cells to the lastrow of the sheet as a range
+Private Function defineColRange(ByVal targetWorkSheet As Worksheet, ByVal targetValue As String, _
+                                Optional ByVal visibleOnly As Boolean, Optional ByVal rtnNoTitle As Boolean, _
+                                Optional ByVal searchByColumn, Optional ByVal searchBackwards) As Range
+    Dim targetlastRow As Long
+    Dim targetlastCol As Long
+    Dim returnRange As Range
+    Dim findTarget As Range
+    
+'default visible only mode off
+
+    If IsMissing(visibleOnly) Then
+         visibleOnly = False
+    End If
+    If IsMissing(rtnNoTitle) Then
+        rtnNoTitle = False
+    End If
+    If IsMissing(searchByColumn) Then
+        searchByColumn = False
+    End If
+    If IsMissing(searchBackwards) Then
+        searchBackwards = False
+    End If
+    
+    'test if targetWorkSheet is not empty
+    If targetWorkSheet Is Nothing Then
+        MsgBox ("Worksheet pass failed!"), vbExclamation
+        Exit Function
+    End If
+
+    targetWorkSheet.Activate
+    targetlastRow = targetWorkSheet.Cells.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Row
+
+    targetlastCol = targetWorkSheet.Cells.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByColumns, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Column
+
+    'find the range
+    
+    If searchByColumn = True Then
+        Set findTarget = targetWorkSheet.Cells.Find(What:=targetValue, After:=Cells(1, 1), _
+                        LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByColumns, _
+                        SearchDirection:=xlNext, MatchCase:=False)
+    ElseIf searchBackwards = True Then
+        Set findTarget = targetWorkSheet.Cells.Find(What:=targetValue, After:=Cells(1, targetlastCol), _
+                        LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByRows, _
+                        SearchDirection:=xlPrevious, MatchCase:=False)
+    Else
+        Set findTarget = targetWorkSheet.Cells.Find(What:=targetValue, After:=Cells(1, 1), _
+                        LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByRows, _
+                        SearchDirection:=xlNext, MatchCase:=False)
+    End If
+
+    If findTarget Is Nothing Then
+        Debug.Print ("Did not find columne title """ & targetValue & ""), vbExclamation
+        Exit Function
+    Else
+        Dim tRow, tCol As Long
+        tRow = findTarget.Row
+        tCol = findTarget.Column
+        
+        On Error Resume Next
+        If visibleOnly = False Then
+            If rtnNoTitle = False Then
+                Set returnRange = targetWorkSheet.Range(Cells(tRow, tCol), Cells(targetlastRow, tCol))
+                Set defineColRange = returnRange
+            Else
+                Set returnRange = targetWorkSheet.Range(Cells(tRow + 1, tCol), Cells(targetlastRow, tCol))
+                Set defineColRange = returnRange
+            End If
+        Else
+            If rtnNoTitle = False Then
+                Set returnRange = targetWorkSheet.Range(Cells(tRow, tCol), Cells(targetlastRow, tCol)).SpecialCells(xlCellTypeVisible)
+                Set defineColRange = returnRange
+            Else
+                Set returnRange = targetWorkSheet.Range(Cells(tRow + 1, tCol), Cells(targetlastRow, tCol)).SpecialCells(xlCellTypeVisible)
+                Set defineColRange = returnRange
+            End If
+        End If
+        
+        If Err <> 0 Then
+            Debug.Print "Worksheet: " & targetWorkSheet.Name & " Column Name: " & targetValue
+        End If
+        On Error GoTo 0
+        Err.Clear
+    End If
+
+End Function
+
+Const statusComp As String = "Completed"
+Const statusRework As String = "Re-work"
+Const status3P As String = "TaskUs"
+Const statusInhouse As String = "Write in House"
+Const statusAssigned As String = "Write in House"
+'Const variables above
+
+
+Sub LT_Part2_Report_MatchInfo()
+'this macro will load column titles in PIM sheet into a listbox, then let user select which items are to be ported into Workflow sheet
+'then add 3 columns to the end, and determine their status and split into "complete", "write in house", "Sent to taskUs", "Rework"
+'then to genearte a list of items that were changed from "Sent to taskUS" to "write inhouse" after sort by column AD(merchandise value)
+
+
+'assumptions:
+'-sheet is already open and the first part of data prep is done
+'-PIM sheet has data
+'-3P pull sheet has data
+
+
+Dim wb As Workbook
+Dim flowWs, pimWs, ws3P As Worksheet
+
+Dim lastRow1 As Long
+Dim lastCol1 As Long
+
+Set wb = ActiveWorkbook
+Set flowWs = wb.Worksheets("Workflow")
+Set pimWs = wb.Worksheets("PIM")
+
+'exit mechanic if the macro is not run based on template
+If flowWs Is Nothing Then
+    MsgBox ("Can not find Worksheet ""Workflow""!")
+    Exit Sub
+End If
+
+If pimWs Is Nothing Then
+    MsgBox ("Can not find Worksheet ""PIM""!")
+    Exit Sub
+End If
+
+    lastRow1 = flowWs.UsedRange.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Row
+
+    lastCol1 = flowWs.UsedRange.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByColumns, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Column
+                    
+'USER FORM HERE
+'load column titles into listbox
+Load LT_P2_DataProcess
+LT_P2_DataProcess.Show
+Unload LT_P2_DataProcess
+'USER FORM FINISHES HERE
+
+
+'vlookup update on the columns just added
+Dim writeRange, criteriaRange, tRange As Range
+Dim i As Integer
+Dim finalCopyComeplete_Column, reworkStatus_Column, Action_column, Internal_Column As Long
+
+    lastCol1 = flowWs.UsedRange.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByColumns, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Column
+
+    
+
+    'add titles for 3 columns after the last column
+    Action_column = lastCol1 + 1
+    flowWs.Cells(1, Action_column) = "Action"
+    
+
+
+'Populate 3P pull column with data
+    Set criteriaRange = defineColRange(flowWs, "Global Product No.", False, True)
+
+     'following are storing the column numbers
+     
+        Set tRange = defineColRange(flowWs, "Final Copy Complete", False, True, , True)
+        finalCopyComeplete_Column = tRange.Column
+        
+        Set tRange = defineColRange(flowWs, "Rework Status (LT)", False, True, , True)
+        reworkStatus_Column = tRange.Column
+        
+        Set tRange = defineColRange(flowWs, "Attribute value of 3rd_Party_Copy", False, True, , True)
+        Internal_Column = tRange.Column
+
+'Start filling in the "action" column, determining the status of workitems
+
+    'loop from row 2 to lastrow, then select each case according to scenerios
+    flowWs.Activate
+    For i = 2 To lastRow1
+        If Cells(i, finalCopyComeplete_Column).Text Like "Yes" And IsEmpty(Cells(i, Action_column)) Then
+            flowWs.Cells(i, Action_column).Value = statusComp 'Mark Action as "completed" if 'final copy completed' as yes
+            flowWs.Cells(i, Action_column).Interior.ColorIndex = 0
+            flowWs.Cells(i, Action_column).Font.ColorIndex = 0
+        ElseIf InStr(flowWs.Cells(i, reworkStatus_Column).Text, "Re-Work:") > 0 And IsEmpty(Cells(i, Action_column)) _
+            And Not InStr(flowWs.Cells(i, reworkStatus_Column).Text, "Write Product Copy") > 0 Then
+            flowWs.Cells(i, Action_column).Value = statusRework 'Mark action as "re-work" if cell contains text "re-work:" but not "re-work: write product copy"
+            flowWs.Cells(i, Action_column).Interior.ColorIndex = 0
+            flowWs.Cells(i, Action_column).Font.ColorIndex = 0
+        ElseIf UCase(flowWs.Cells(i, Internal_Column).Text) = UCase(status3P) And IsEmpty(Cells(i, Action_column)) Then 'if 3P-pull column is sent to taskus
+            flowWs.Cells(i, Action_column).Value = status3P   '3P string into column
+            flowWs.Cells(i, Action_column).Interior.ColorIndex = 0
+            flowWs.Cells(i, Action_column).Font.ColorIndex = 0
+        ElseIf UCase(flowWs.Cells(i, Internal_Column)) = UCase("internal") And IsEmpty(Cells(i, Action_column)) Then
+            flowWs.Cells(i, Action_column).Value = statusAssigned   'Alreadyassigned
+            flowWs.Cells(i, Action_column).Interior.ColorIndex = 0
+            flowWs.Cells(i, Action_column).Font.ColorIndex = 0
+        Else   'rest of the actions if empty
+            flowWs.Cells(i, Action_column).Value = statusInhouse
+            flowWs.Cells(i, Action_column).Interior.ColorIndex = 0
+            flowWs.Cells(i, Action_column).Font.ColorIndex = 0
+        End If
+    Next i
+
+flowWs.Activate
+End Sub
+
+'define a range by looking for a specific text title, and return all the cells to the lastrow of the sheet as a range
+Private Function defineColRange(ByVal targetWorkSheet As Worksheet, ByVal targetValue As String, _
+                                Optional ByVal visibleOnly As Boolean, Optional ByVal rtnNoTitle As Boolean, _
+                                Optional ByVal searchByColumn, Optional ByVal searchBackwards) As Range
+    Dim targetlastRow As Long
+    Dim targetlastCol As Long
+    Dim returnRange As Range
+    Dim findTarget As Range
+    
+'default visible only mode off
+
+    If IsMissing(visibleOnly) Then
+         visibleOnly = False
+    End If
+    If IsMissing(rtnNoTitle) Then
+        rtnNoTitle = False
+    End If
+    If IsMissing(searchByColumn) Then
+        searchByColumn = False
+    End If
+    If IsMissing(searchBackwards) Then
+        searchBackwards = False
+    End If
+    
+    'test if targetWorkSheet is not empty
+    If targetWorkSheet Is Nothing Then
+        MsgBox ("Worksheet pass failed!"), vbExclamation
+        Exit Function
+    End If
+
+    targetWorkSheet.Activate
+    targetlastRow = targetWorkSheet.Cells.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Row
+
+    targetlastCol = targetWorkSheet.Cells.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByColumns, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Column
+
+    'find the range
+    
+    If searchByColumn = True Then
+        Set findTarget = targetWorkSheet.Cells.Find(What:=targetValue, After:=Cells(1, 1), _
+                        LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByColumns, _
+                        SearchDirection:=xlNext, MatchCase:=False)
+    ElseIf searchBackwards = True Then
+        Set findTarget = targetWorkSheet.Cells.Find(What:=targetValue, After:=Cells(1, targetlastCol), _
+                        LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByRows, _
+                        SearchDirection:=xlPrevious, MatchCase:=False)
+    Else
+        Set findTarget = targetWorkSheet.Cells.Find(What:=targetValue, After:=Cells(1, 1), _
+                        LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByRows, _
+                        SearchDirection:=xlNext, MatchCase:=False)
+    End If
+
+    If findTarget Is Nothing Then
+        Debug.Print ("Did not find columne title """ & targetValue & ""), vbExclamation
+        Exit Function
+    Else
+        Dim tRow, tCol As Long
+        tRow = findTarget.Row
+        tCol = findTarget.Column
+        
+        On Error Resume Next
+        If visibleOnly = False Then
+            If rtnNoTitle = False Then
+                Set returnRange = targetWorkSheet.Range(Cells(tRow, tCol), Cells(targetlastRow, tCol))
+                Set defineColRange = returnRange
+            Else
+                Set returnRange = targetWorkSheet.Range(Cells(tRow + 1, tCol), Cells(targetlastRow, tCol))
+                Set defineColRange = returnRange
+            End If
+        Else
+            If rtnNoTitle = False Then
+                Set returnRange = targetWorkSheet.Range(Cells(tRow, tCol), Cells(targetlastRow, tCol)).SpecialCells(xlCellTypeVisible)
+                Set defineColRange = returnRange
+            Else
+                Set returnRange = targetWorkSheet.Range(Cells(tRow + 1, tCol), Cells(targetlastRow, tCol)).SpecialCells(xlCellTypeVisible)
+                Set defineColRange = returnRange
+            End If
+        End If
+        
+        If Err <> 0 Then
+            Debug.Print "Worksheet: " & targetWorkSheet.Name & " Column Name: " & targetValue
+        End If
+        On Error GoTo 0
+        Err.Clear
+    End If
+
+End Function
+
+' takes a range to write in, then lookup based on given criteria range against lookup range
+' optional display of error value when not found in cell, and exact match same as vlookup
+
+Private Function vLookLoop(ByVal writeRange As Range, ByVal criteriaRange As Range, ByVal lookupRange As Range, _
+                            ByVal columnNumber As Long, Optional ByVal DisplayError As Boolean, _
+                            Optional ByVal ExactMatch As Boolean)
+    Application.ScreenUpdating = False
+    If IsMissing(DisplayError) Then
+        DisplayError = True
+    End If
+    
+    If IsMissing(ExactMatch) Then
+        ExactMatch = False
+    End If
+    
+    Dim i As Long
+    
+'loop through dem writerange, at the same time loop through dat criteriaRange
+'logic here is each cell in writerange, then lookup each cell in criteria range
+
+    For i = 1 To writeRange.Rows.count
+            On Error Resume Next
+            writeRange.Item(i, 1) = Application.WorksheetFunction.VLookup(criteriaRange.Item(i, 1).Value, lookupRange, columnNumber, ExactMatch)
+            writeRange.Item(i, 1).Interior.ColorIndex = 0
+            writeRange.Item(i, 1).Font.ColorIndex = 0
+            
+            If Err <> 0 And DisplayError = True Then
+                writeRange.Item(i, 1) = "#N/A"
+            End If
+            
+            On Error GoTo 0
+            Err.Clear
+    Next i
+    
+    Application.ScreenUpdating = True
+End Function
+
+
+
