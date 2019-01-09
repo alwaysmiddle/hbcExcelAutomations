@@ -1,0 +1,60 @@
+Option Explicit
+
+Private Sub BtnReset_Click()
+    lblErrorMsg.Visible = False
+    Me.CBoxSVS.Value = 800
+    Me.CBoxItem.Value = 600
+    Me.CBoxAlphaNum.Value = 800
+End Sub
+
+Private Sub BtnSave_Click()
+    If checkValues(Me.CBoxSVS.Value) And checkValues(Me.CBoxItem.Value) And checkValues(Me.CBoxAlphaNum.Value) Then
+        lblErrorMsg.Visible = False
+        RegKeySave regSvsKey, Me.CBoxSVS.Value
+        RegKeySave regItemKey, Me.CBoxItem.Value
+        RegKeySave regAlphaNum, Me.CBoxAlphaNum.Value
+    Else
+        lblErrorMsg.Visible = True
+        lblErrorMsg = "Error: you must enter a number between the options given"
+    End If
+End Sub
+
+
+Private Sub UserForm_Initialize()
+    regSvsKey = "HKEY_CURRENT_USER\Software\VB and VBA Program Settings\PimStringGenerator\PIM_Format_SVS_Setting_Key"
+    regItemKey = "HKEY_CURRENT_USER\Software\VB and VBA Program Settings\PimStringGenerator\PIM_Format_Item_Setting_Key"
+    regAlphaNum = "HKEY_CURRENT_USER\Software\VB and VBA Program Settings\PimStringGenerator\PIM_Format_AlphaNum_Setting_Key"
+    loadComboBoxValues Me.CBoxItem
+    loadComboBoxValues Me.CBoxSVS
+    loadComboBoxValues Me.CBoxAlphaNum
+    
+    If RegKeyExists(regSvsKey) Then
+        Me.CBoxSVS.Value = RegKeyRead(regSvsKey)
+    Else
+        Me.CBoxSVS.Value = 800
+    End If
+    
+    If RegKeyExists(regItemKey) Then
+        Me.CBoxItem.Value = RegKeyRead(regItemKey)
+    Else
+        Me.CBoxItem.Value = 600
+    End If
+    
+    If RegKeyExists(regAlphaNum) Then
+        Me.CBoxAlphaNum.Value = RegKeyRead(regAlphaNum)
+    Else
+        Me.CBoxAlphaNum.Value = 800
+    End If
+End Sub
+
+Sub loadComboBoxValues(cBox As ComboBox)
+    cBox.List = Array(400, 450, 500, 550, 600, 650, 700, 750, 800)
+End Sub
+
+Private Function checkValues(ByVal valueToCheck As Long) As Boolean
+    If valueToCheck >= 400 And valueToCheck <= 800 Then
+        checkValues = True
+    Else
+        checkValues = False
+    End If
+End Function
