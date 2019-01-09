@@ -1,0 +1,677 @@
+Public startwb, doneWb, SLAwb, genWb As Workbook
+Public uploadPath, genPath As String
+Public Upload_Date As String
+
+Public uploadWs, startWs, SLAws As Worksheet
+
+Const donefolder As String = "\\scb-lx-adv01\Fullpress\STUDIO_NEW\03_COPY\BAY\1. LIVE"
+Const SLAfolder As String = "\\bhdata06\busdev\Bay eComm\Product Onboarding\SLA Standards Reporting\Daily PC_MC_NNL Reports"
+Const template_location As String = "\\scb-lx-adv01\Fullpress\STUDIO_NEW\03_COPY\BAY\1. LIVE\Copy_Detail_Final_TemplateForLiveUpload.xlsx"
+'donefolder and SLAfolder for initial file open locations
+
+Public Sub SetStartWb()
+    If startwb Is Nothing Then
+        Set startwb = Application.ActiveWorkbook
+    Else
+        Set startWs = startwb.Worksheets(1)
+    End If
+End Sub
+
+
+Private Sub GenerateReport_Button_Click()
+    Call SetStartWb
+    
+    Upload_Date = Left$(startwb.Name, 10)
+ 'check if SLA is linked
+    If LoadSLA_Button.Locked = False Or SLA_ComboBox.Locked = False Then
+        LoadSLA_Button.ForeColor = rgbRed
+        Exit Sub
+    End If
+    
+ 'check against SLA file to determine which item to upload
+    Dim SLAitemRange, startRange As Range
+    Dim indiCell As Range
+    Dim lastCol As Long
+    
+    SLAwb.Activate
+    SLAws.Activate
+    Set SLAitemRange = defineColRangeX(SLAws, "MFG SVS", 0, SLAws.Range("F3:DA3"))
+        If SLAitemRange Is Nothing Then
+            MsgBox ("SLA file heading ""Mfg SVS"" failed to be found, trying ""MfgSVS""!")
+            Set SLAitemRange = defineColRangeX(SLAws, "MFGSVS", 0, SLAws.Range("F3:DA3"))
+                If SLAitemRange Is Nothing Then
+                    Exit Sub
+                End If
+        End If
+        
+    Set startRange = defineColRange(startWs, "MFG-SVS", False, True, False)
+    
+    lastCol = startWs.UsedRange.Find(What:="*", After:=Range("A1"), LookAt:=xlPart, _
+                    LookIn:=xlFormulas, SearchOrder:=xlByColumns, SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Column
+    startWs.Cells(1, lastCol + 1).Value = "Upload Status"
+    
+ 'use vlookup to check to see if the MFG from start sheet exists in the SLA masterfile.
+ 'if it does set them to 'upload', if not then 'manual'
+    For Each indiCell In startRange
+
+        On Error Resume Next
+        If Application.WorksheetFunction.VLookup(indiCell.Value, SLAitemRange, 1, 0) > 0 Then
+            Cells(indiCell.Row, lastCol + 1) = "Upload"
+        End If
+
+        If Err.Number = 1004 Then
+            Cells(indiCell.Row, lastCol + 1) = "Manual"
+        End If
+        
+        On Error GoTo 0
+        Err.Clear
+        
+    Next indiCell
+
+
+ 'the following section deals with tempalte
+    Dim genWs As Worksheet
+    Dim WriteRange, lookupRange, genRange As Range
+    Dim SLAlastRow, SLAlastCol As Long
+    
+  'create copy of the template in the current folder
+    'creating an object to copy file
+    Dim fso As Object
+    Set fso = VBA.CreateObject("Scripting.FileSystemObject")
+    genPath = uploadPath & "\" & "Copy_Detail_Final_" & Upload_Date & ".xlsx"
+    
+    On Error Resume Next
+    Call fso.Copyfile(template_location, genPath, False)
+    
+    If Err.Number Then
+        MsgBox ("Today's Upload file already exist!! Please delete the files from your drive. Exiting!")
+        Exit Sub
+    End If
+    
+    On Error GoTo 0
+    Err.Clear
+       
+    Set genWb = Workbooks.Open(genPath, UpdateLinks:=False)
+    Set genWs = genWb.Worksheets(1)
+    
+  'with template fill in all the vlookup, first filter by upload status, then paste the range
+    If startWs.AutoFilterMode Then
+        startWs.AutoFilterMode = False
+    End If
+    
+    On Error Resume Next
+    startWs.UsedRange.AutoFilter Field:=lastCol + 1, Criteria1:="Upload" 'filter upload status
+    
+    If Err = 1004 Then 'auto quit if there is nothing to upload
+        MsgBox ("No ""Upload"" status present, abort proceedure!!"), vbCritical
+        Exit Sub
+    End If
+
+    On Error GoTo 0
+    Err.Clear
+    
+  'find MSF-SVS then copy into template file now named today's date + copydetails
+    Set startRange = defineColRange(startWs, "MFG-SVS", True, True)
+    
+    startRange.Copy
+    
+    Set indiCell = defineColRange(genWs, "MFG-SVS", False, True, True)
+    indiCell.Offset(1, 0).PasteSpecial xlPasteValuesAndNumberFormats
+    
+    genWs.Activate
+    Selection.RemoveDuplicates Columns:=1, Header:=xlNo
+ 
+    indiCell.EntireRow.Delete shift:=xlUp
+
+ 'populate template section
+    'copy Product Number to column B of SLA
+    If Not SLAitemRange.Column = 2 Then
+        SLAitemRange.EntireColumn.Copy
+        SLAws.Columns(2).Insert shift:=xlToRight
+    End If
+    
+    'find lastrow, lastcol of sla, define a range to vlookup
+    SLAlastRow = SLAws.UsedRange.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Row
+
+    SLAlastCol = SLAws.UsedRange.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByColumns, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Column
+    
+    Set SLAitemRange = Nothing
+    Set genRange = defineColRange(genWs, "MFG-SVS", False, True, True)
+    
+    SLAws.Activate
+    Set lookupRange = SLAws.Range(Cells(1, 2), Cells(SLAlastRow, SLAlastCol))
+
+    
+    'then vlookup all the ranges on template sheet
+    Set WriteRange = defineColRange(genWs, "CODE", False, True, True)
+        WriteRange.Value = "RF12"
+    
+    Set WriteRange = defineColRange(genWs, "OTB MONTH", False, True, False)
+        Call vLookLoop(WriteRange, genRange, lookupRange, 35, False, False)
+    
+    Dim I, col As Integer
+    Dim genLastRow As Long
+    Dim titleLoop, title As Range
+    Dim colnumArray()
+    
+    Set titleLoop = genWs.Range("E9:O9")
+    colnumArray = Application.Evaluate("{4, 6, 33, 8, 10, 12, 17, 19, 21, 18, 16}")
+
+    
+    genLastRow = genWs.UsedRange.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Row
+    
+    I = 1
+    For Each title In titleLoop
+        genWs.Activate
+        Set WriteRange = genWs.Range(Cells(10, title.Column), Cells(genLastRow, title.Column))
+        Call vLookLoop(WriteRange, genRange, lookupRange, colnumArray(I), False, False)
+        I = I + 1
+    Next title
+    
+    'set supervendor style to 13 digits
+    Set WriteRange = defineColRange(genWs, "Super Vendor Style", False, True, False)
+    Dim tempString As String
+    For Each title In WriteRange
+        If Len(title.Value) < 13 Then
+                title.NumberFormat = "@"
+                tempString = title.Value
+                title.Value = Format(tempString, "0000000000000")
+        End If
+    Next title
+    
+ 'work with PSL COPY file here on
+    Application.ScreenUpdating = False
+    Set startRange = Find_DefineColRange(startWs, "MFG-SVS", 10)
+    Set WriteRange = genWs.Range("AW10:AW" & genLastRow)
+    
+    Call vLookLoop(WriteRange, genRange, startRange, 6) 'final prod name
+    WriteRange.Copy genWs.Range("AX10")
+
+    Set WriteRange = genWs.Range("AY10:AY" & genLastRow)
+    Debug.Print WriteRange.Address
+    Call vLookLoop(WriteRange, genRange, startRange, 7) 'final copy body
+    Set WriteRange = genWs.Range("AZ10:AZ" & genLastRow)
+    WriteRange.Value = "Nouveauté! La description suivra bientôt."
+    
+    Set WriteRange = genWs.Range("BA10:BA" & genLastRow)
+    Call vLookLoop(WriteRange, genRange, startRange, 8) 'final copy bullets
+    
+ 'cut column A to insert before column G
+    genWs.Range("A:A").Cut
+    genWs.Range("G:G").Insert shift:=xlToRight
+    Application.CutCopyMode = False
+    
+    startWs.AutoFilterMode = False
+    Application.ScreenUpdating = True
+End Sub
+
+
+
+Private Sub LoadDoneFile_Button_Click()
+    Dim intChoice As Integer
+    Dim strPath As String
+
+    'only allow the user to select one file
+    Application.FileDialog(msoFileDialogOpen).AllowMultiSelect = False
+    'make the file dialog visible to the user
+    Application.FileDialog(msoFileDialogOpen).InitialFileName = donefolder & "\"
+    intChoice = Application.FileDialog(msoFileDialogOpen).Show
+    'determine what choice the user made
+    If intChoice <> 0 Then
+    'get the file path selected by the user
+    strPath = Application.FileDialog(msoFileDialogOpen).SelectedItems(1)
+    'print the file path to Label
+    LoadDoneFile_Tbox.Text = strPath
+
+    End If
+End Sub
+
+
+Private Sub LoadSLA_Button_Click()
+    Dim intChoice As Integer
+    Dim SLAPath As String
+    Dim ws As Worksheet
+
+    'only allow the user to select one file
+    Application.FileDialog(msoFileDialogOpen).AllowMultiSelect = False
+    'make the file dialog visible to the user
+    Application.FileDialog(msoFileDialogOpen).InitialFileName = SLAfolder & "\"
+    
+    intChoice = Application.FileDialog(msoFileDialogOpen).Show
+    
+    If intChoice <> 0 Then
+        'get the file path selected by the user
+        SLAPath = Application.FileDialog(msoFileDialogOpen).SelectedItems(1)
+        'print the file path to Label
+        SLA_Tbox.Text = SLAPath
+        
+        Set SLAwb = getWorkbook(SLAPath)
+        
+        If SLAwb Is Nothing Then
+            MsgBox "File not found:" & vbCrLf & SLAPath, vbCritical, "Loading Cancelled"
+            Exit Sub
+        End If
+        
+' load combo box with worksheet names
+           
+        For Each ws In SLAwb.Worksheets
+            SLA_ComboBox.AddItem ws.Name
+        Next
+          
+    End If
+
+End Sub
+
+Private Sub OpenFolder_Button_Click()
+    Shell "explorer """ & uploadPath & "", vbNormalFocus
+End Sub
+
+Private Sub SaveThenCSV_Button_Click()
+    If genWb Is Nothing Then
+        MsgBox ("Workbook did not generate!")
+    Else
+        Application.DisplayAlerts = False
+        genWb.SaveAs Filename:=uploadPath & "\" & "Copy_Detail_Final_" & Upload_Date & ".xlsx", FileFormat:=xlWorkbookDefault
+        genWb.SaveAs Filename:=uploadPath & "\" & "Copy_Detail_Final_" & Upload_Date & ".csv", FileFormat:=xlCSV
+        genWb.Close savechanges:=xlYes
+        Application.DisplayAlerts = True
+    End If
+End Sub
+
+Private Sub SLA_Button_Click()
+  
+    If SLA_ComboBox.Value = "" Then
+        SLA_ComboBox.BackColor = rgbRed
+        SLA_Button.ForeColor = rgbRed
+        Exit Sub
+    Else
+        Set SLAws = SLAwb.Worksheets(SLA_ComboBox.Value)
+        
+        If SLAws Is Nothing Then
+            MsgBox ("Link Worksheet Failed!!"), vbCritical
+            Exit Sub
+        Else
+            MsgBox ("Linked to Worksheet: " & SLAws.Name), vbInformation
+            SLA_Button.ForeColor = Me.ForeColor
+            SLA_ComboBox.Locked = True
+            LoadSLA_Button.Locked = True
+            SLA_Button.Locked = True
+        End If
+    End If
+End Sub
+
+Private Sub SLA_ComboBox_AfterUpdate()
+    SLA_ComboBox.BackColor = Me.BackColor
+End Sub
+
+
+Sub UserForm_Initialize()
+    Set startwb = Application.ActiveWorkbook
+    If startwb Is Nothing Then
+        MsgBox ("Failed to load workbook!")
+    Else
+        'set the file path for for current workbook, open file locations of upload folder, techanically this macro should start on copy file
+        uploadPath = startwb.Path
+    End If
+End Sub
+
+
+'define a range by looking for a specific text title, and return all the cells to the lastrow of the sheet as a range
+Private Function defineColRange(ByVal targetWorkSheet As Worksheet, ByVal targetValue As String, _
+                                Optional ByVal visibleOnly As Boolean, Optional ByVal rtnNoTitle As Boolean, _
+                                Optional ByVal searchByColumn, Optional ByVal searchBackwards) As Range
+    Dim targetlastRow As Long
+    Dim targetlastCol As Long
+    Dim returnRange As Range
+    Dim findTarget As Range
+    
+ 'default visible only mode off
+
+    If IsMissing(visibleOnly) Then
+         visibleOnly = False
+    End If
+    If IsMissing(rtnNoTitle) Then
+        rtnNoTitle = False
+    End If
+    If IsMissing(searchByColumn) Then
+        searchByColumn = False
+    End If
+    If IsMissing(searchBackwards) Then
+        searchBackwards = False
+    End If
+    
+    'test if targetWorkSheet is not empty
+    If targetWorkSheet Is Nothing Then
+        MsgBox ("Worksheet pass failed!"), vbExclamation
+        Exit Function
+    End If
+
+    targetWorkSheet.Activate
+    targetlastRow = targetWorkSheet.Cells.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Row
+
+    targetlastCol = targetWorkSheet.Cells.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByColumns, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Column
+
+    'find the range
+    
+    If searchByColumn = True Then
+        Set findTarget = targetWorkSheet.Cells.Find(What:=targetValue, After:=Cells(1, 1), _
+                        LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByColumns, _
+                        SearchDirection:=xlNext, MatchCase:=False)
+    ElseIf searchBackwards = True Then
+        Set findTarget = targetWorkSheet.Cells.Find(What:=targetValue, After:=Cells(1, targetlastCol), _
+                        LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByRows, _
+                        SearchDirection:=xlPrevious, MatchCase:=False)
+    Else
+        Set findTarget = targetWorkSheet.Cells.Find(What:=targetValue, After:=Cells(1, 1), _
+                        LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByRows, _
+                        SearchDirection:=xlNext, MatchCase:=False)
+    End If
+
+    If findTarget Is Nothing Then
+        Debug.Print ("Did not find columne title """ & targetValue & ""), vbExclamation
+        Exit Function
+    Else
+        Dim tRow, tCol As Long
+        tRow = findTarget.Row
+        tCol = findTarget.Column
+        
+        On Error Resume Next
+        If visibleOnly = False Then
+            If rtnNoTitle = False Then
+                Set returnRange = targetWorkSheet.Range(Cells(tRow, tCol), Cells(targetlastRow, tCol))
+                Set defineColRange = returnRange
+            Else
+                Set returnRange = targetWorkSheet.Range(Cells(tRow + 1, tCol), Cells(targetlastRow, tCol))
+                Set defineColRange = returnRange
+            End If
+        Else
+            If rtnNoTitle = False Then
+                Set returnRange = targetWorkSheet.Range(Cells(tRow, tCol), Cells(targetlastRow, tCol)).SpecialCells(xlCellTypeVisible)
+                Set defineColRange = returnRange
+            Else
+                Set returnRange = targetWorkSheet.Range(Cells(tRow + 1, tCol), Cells(targetlastRow, tCol)).SpecialCells(xlCellTypeVisible)
+                Set defineColRange = returnRange
+            End If
+        End If
+        
+        If Err <> 0 Then
+            Debug.Print "Worksheet: " & targetWorkSheet.Name & " Column Name: " & targetValue
+        End If
+        On Error GoTo 0
+        Err.Clear
+    End If
+
+End Function
+
+Private Sub ProcessDoneFile_Button_Click()
+'does not let process file run if no file is loaded
+    If LoadDoneFile_Tbox = "" Then
+        MsgBox ("Can not process without an input file!"), vbCritical
+        Exit Sub
+    Else
+        
+        If InStr(1, LoadDoneFile_Tbox.Text, "done", vbTextCompare) < 1 Then
+            MsgBox ("The loaded file does not contain ""Done"" in File Name!"), vbCritical
+            Exit Sub
+        End If
+        
+ 'load workbook, and open
+        Call SetStartWb
+        
+        Application.ScreenUpdating = False
+        
+        Dim doneFpath As String
+        Dim lookupRange, indiCell, MFGRange As Range
+        Dim MFGcol As Integer
+        Dim doneWS As Worksheet
+        Dim doneRange As Range
+        Dim MFGnum As String
+        
+        doneFpath = LoadDoneFile_Tbox.Text
+        Set doneWb = Workbooks.Open(Filename:=doneFpath, UpdateLinks:=False, ReadOnly:=True)
+        
+        Set doneWS = doneWb.Worksheets(1)
+        
+ 'check workbook for info, loop through current workbook then vlookup
+        
+        Set lookupRange = defineColRange(startWs, "PRODUCT NAME", False, True)
+        Set MFGRange = defineColRange(startWs, "MFG-SVS", False, True)
+        Set doneRange = defineColRange(doneWS, "MFG-SVS", False, True, True)
+        
+        MFGcol = MFGRange.Column
+        
+ 'format both columns before compare
+
+        For Each indiCell In MFGRange
+            If IsNumeric(indiCell) Then
+                If Len(indiCell.Value) < 13 Then
+                    indiCell.NumberFormat = "@"
+                    MFGnum = indiCell.Value
+                    indiCell.Value = Format(MFGnum, "0000000000000")
+                End If
+            End If
+        Next indiCell
+        
+        For Each indiCell In doneRange
+            If IsNumeric(indiCell) Then
+                If Len(indiCell.Value) < 13 Then
+                    indiCell.NumberFormat = "@"
+                    MFGnum = indiCell.Value
+                    indiCell.Value = Format(MFGnum, "0000000000000")
+                End If
+            End If
+        Next indiCell
+
+ 'vlookup section, vlookup in done file to pull product name/bodycopy/bullets
+        For Each indiCell In lookupRange
+            If IsEmpty(indiCell) Then
+                On Error Resume Next
+                indiCell.Formula = Application.WorksheetFunction.VLookup(startWs.Cells(indiCell.Row, MFGcol), _
+                            doneWS.UsedRange, 56, False)
+                indiCell.WrapText = False
+
+                indiCell.Offset(0, 1).Formula = Application.WorksheetFunction.VLookup(startWs.Cells(indiCell.Row, MFGcol), _
+                            doneWS.UsedRange, 57, False)
+                indiCell.Offset(0, 1).WrapText = False
+
+                indiCell.Offset(0, 2).Formula = Application.WorksheetFunction.VLookup(startWs.Cells(indiCell.Row, MFGcol), _
+                            doneWS.UsedRange, 58, False)
+                indiCell.Offset(0, 2).WrapText = False
+                If Err <> 0 And Err <> 1004 Then
+                    MsgBox ("Error Found!"), vbCritical
+                    Exit Sub
+                End If
+                On Error GoTo 0
+                Err.Clear
+            End If
+        Next indiCell
+        
+    Application.ScreenUpdating = True
+    
+ 'show processed file
+        ProcessFileName_Label.Caption = "Processed: " & doneWb.Name
+        LoadDoneFile_Tbox.Text = ""
+        
+ 'close workbook without saving
+    doneWb.Close savechanges:=False
+    
+    End If 'end if for the condition at the start of sub
+End Sub
+
+'check if workbook is open, if it's not open it
+Function getWorkbook(WorkbookFullName As String) As Workbook
+    Dim wb As Workbook
+    For Each wb In Workbooks
+        If wb.FullName = WorkbookFullName Then Exit For
+    Next
+
+    If wb Is Nothing Then
+        If Len(Dir(WorkbookFullName)) > 0 Then
+            Set wb = Workbooks.Open(WorkbookFullName)
+        End If
+    End If
+    Set getWorkbook = wb
+End Function
+
+' takes a range to write in, then lookup based on given criteria range against lookup range
+' optional display of error value when not found in cell, and exact match same as vlookup
+
+Private Function vLookLoop(ByVal WriteRange As Range, ByVal CriteriaRange As Range, ByVal lookupRange As Range, _
+                            ByVal columnNumber As Long, Optional ByVal DisplayError As Boolean, _
+                            Optional ByVal ExactMatch As Boolean)
+    Application.ScreenUpdating = False
+    If IsMissing(DisplayError) Then
+        DisplayError = True
+    End If
+    
+    If IsMissing(ExactMatch) Then
+        ExactMatch = False
+    End If
+    
+    Dim I As Long
+    
+ 'loop through dem writerange, at the same time loop through dat criteriaRange
+ 'logic here is each cell in writerange, then lookup each cell in criteria range
+
+    For I = 1 To WriteRange.Rows.Count
+            On Error Resume Next
+            WriteRange.Item(I, 1) = Application.WorksheetFunction.VLookup(CriteriaRange.Item(I, 1).Value, lookupRange, columnNumber, ExactMatch)
+            
+            If Err <> 0 And DisplayError = True Then
+                WriteRange.Item(I, 1).Value = "#N/A"
+            End If
+            
+            On Error GoTo 0
+            Err.Clear
+    Next I
+    
+    Application.ScreenUpdating = True
+End Function
+
+'Define a range from cell found by .find method to the lastrow and user defined column offset
+Function Find_DefineColRange(ByVal onWorksheet As Worksheet, ByVal cellContent As String, ByVal columnsOffset As Long, _
+                            Optional ByVal SearchRange As Range = Nothing) As Range
+    Dim foundCell As Range
+    Dim lastRow As Long
+ 'if the searchrange is supplied then find it in searchrange, otherwise search on the given worksheet
+    lastRow = onWorksheet.Cells.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Row
+    
+    If SearchRange Is Nothing Then
+        Set foundCell = onWorksheet.Cells.Find(What:=cellContent, LookAt:=xlPart, LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, SearchDirection:=xlNext, MatchCase:=False)
+    Else
+        Set foundCell = SearchRange.Find(What:=cellContent, LookAt:=xlPart, LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, SearchDirection:=xlNext, MatchCase:=False)
+    End If
+    
+    onWorksheet.Activate
+    Set Find_DefineColRange = onWorksheet.Range(Cells(foundCell.Row, foundCell.Column), Cells(lastRow, foundCell.Column + columnsOffset))
+End Function
+
+'define a range by looking for a specific text title, and return all the cells to the lastrow of the sheet as a range
+Private Function defineColRangeX(ByVal ws As Worksheet, ByVal targetValue As String, ByVal columnsOffset As Integer, _
+                                Optional ByVal SearchRange As Range = Nothing, Optional ByVal visibleOnly As Boolean = False, _
+                                Optional ByVal RtnHeader As Boolean = False) As Range
+    Dim targetlastRow As Long
+    Dim findTarget As Range
+    Dim returnRange As Range
+    
+    'test if Ws is not empty
+    If ws Is Nothing Then
+        MsgBox ("Worksheet pass failed!"), vbExclamation
+        Exit Function
+    End If
+
+    ws.Activate
+    targetlastRow = ws.Cells.Find(What:="*", _
+                    After:=Range("A1"), _
+                    LookAt:=xlPart, _
+                    LookIn:=xlFormulas, _
+                    SearchOrder:=xlByRows, _
+                    SearchDirection:=xlPrevious, _
+                    MatchCase:=False).Row
+
+    'find the range
+    
+    If SearchRange Is Nothing Then
+        Set findTarget = ws.Cells.Find(What:=targetValue, After:=Cells(1, 1), _
+                        LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByRows, _
+                        SearchDirection:=xlNext, MatchCase:=False)
+    Else
+        Set findTarget = SearchRange.Cells.Find(What:=targetValue, After:=SearchRange.Cells(1, 1), _
+                        LookIn:=xlFormulas, LookAt:=xlPart, SearchOrder:=xlByRows, _
+                        SearchDirection:=xlNext, MatchCase:=False)
+    End If
+
+    If findTarget Is Nothing Then
+        Debug.Print ("Did not find columne title: " & targetValue & " on Worksheet: " & ws.Name), vbExclamation
+        Exit Function
+    Else
+        Dim tRow, tCol As Long
+        tRow = findTarget.Row
+        tCol = findTarget.Column
+        
+        On Error Resume Next
+        If visibleOnly = False Then
+            If RtnHeader = True Then
+                Set returnRange = ws.Range(Cells(tRow, tCol), Cells(targetlastRow, tCol + columnsOffset))
+                Set defineColRangeX = returnRange
+            Else
+                Set returnRange = ws.Range(Cells(tRow + 1, tCol), Cells(targetlastRow, tCol + columnsOffset))
+                Set defineColRangeX = returnRange
+            End If
+        Else
+            If RtnHeader = True Then
+                Set returnRange = ws.Range(Cells(tRow, tCol), Cells(targetlastRow, tCol + columnsOffset)).SpecialCells(xlCellTypeVisible)
+                Set defineColRangeX = returnRange
+            Else
+                Set returnRange = ws.Range(Cells(tRow + 1, tCol), Cells(targetlastRow, tCol + columnsOffset)).SpecialCells(xlCellTypeVisible)
+                Set defineColRangeX = returnRange
+            End If
+        End If
+        
+        If Err <> 0 Then
+            Debug.Print "Worksheet: " & ws.Name & " Column Name: " & targetValue
+        End If
+        On Error GoTo 0
+        Err.Clear
+    End If
+
+End Function
